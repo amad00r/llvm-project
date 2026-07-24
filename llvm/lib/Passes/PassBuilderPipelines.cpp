@@ -70,6 +70,7 @@
 #include "llvm/Transforms/IPO/MemProfContextDisambiguation.h"
 #include "llvm/Transforms/IPO/MergeFunctions.h"
 #include "llvm/Transforms/IPO/ModuleInliner.h"
+#include "llvm/Transforms/IPO/OpenMPKernelVersioning.h"
 #include "llvm/Transforms/IPO/OpenMPOpt.h"
 #include "llvm/Transforms/IPO/PartialInlining.h"
 #include "llvm/Transforms/IPO/SCCP.h"
@@ -1199,6 +1200,8 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
       MPM.addPass(
           PGOIndirectCallPromotion(true /* IsInLTO */, true /* SamplePGO */));
   }
+
+  MPM.addPass(OpenMPKernelVersioningPass());
 
   // Try to perform OpenMP specific optimizations on the module. This is a
   // (quick!) no-op if there are no OpenMP runtime calls present in the module.

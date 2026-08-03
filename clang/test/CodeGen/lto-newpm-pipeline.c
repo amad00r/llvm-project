@@ -27,6 +27,7 @@
 
 // CHECK-FULL-O0: Running pass: VerifierPass
 // CHECK-FULL-O0-NEXT: Running analysis: VerifierAnalysis
+// CHECK-FULL-O0-NEXT: Running pass: MaterializeKernelInfoPass
 // CHECK-FULL-O0-NEXT: Running analysis: InnerAnalysisManagerProxy
 // CHECK-FULL-O0-NEXT: Running pass: EntryExitInstrumenterPass
 // CHECK-FULL-O0-NEXT: Running pass: AlwaysInlinerPass
@@ -43,6 +44,7 @@
 
 // CHECK-THIN-O0: Running pass: VerifierPass
 // CHECK-THIN-O0-NEXT: Running analysis: VerifierAnalysis
+// CHECK-THIN-O0-NEXT: Running pass: MaterializeKernelInfoPass
 // CHECK-THIN-O0-NEXT: Running analysis: InnerAnalysisManagerProxy
 // CHECK-THIN-O0-NEXT: Running pass: EntryExitInstrumenterPass
 // CHECK-THIN-O0-NEXT: Running pass: AlwaysInlinerPass

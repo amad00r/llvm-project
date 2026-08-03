@@ -32,7 +32,9 @@
 
 ; CHECK-EP: Running pass: NoOpModulePass
 ; CHECK-O: Running pass: CrossDSOCFIPass
+; CHECK-O-NEXT: Running pass: GPUKernelVersioningPass
 ; CHECK-O-NEXT: Running pass: OpenMPOptPass
+; CHECK-O-NEXT: Running pass: MaterializeKernelInfoPass
 ; CHECK-O-NEXT: Running pass: GlobalDCEPass
 ; CHECK-O-NEXT: Running pass: InferFunctionAttrsPass
 ; CHECK-O-NEXT: Running analysis: InnerAnalysisManagerProxy<{{.*}}Module
@@ -83,7 +85,9 @@
 ; CHECK-O23-NEXT: Running pass: InlinerPass
 ; CHECK-O23-NEXT: Invalidating analysis: InlineAdvisorAnalysis
 ; CHECK-O23-NEXT: Running pass: GlobalOptPass
+; CHECK-O23-NEXT: Running pass: GPUKernelVersioningPass
 ; CHECK-O23-NEXT: Running pass: OpenMPOptPass
+; CHECK-O23-NEXT: Running pass: MaterializeKernelInfoPass
 ; CHECK-O23-NEXT: Running pass: GlobalDCEPass
 ; CHECK-O23-NEXT: Running pass: ArgumentPromotionPass on (foo)
 ; CHECK-O23-NEXT: CoroSplitPass on (foo)

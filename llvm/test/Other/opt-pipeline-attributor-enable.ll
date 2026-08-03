@@ -7,17 +7,17 @@
 ; RUN: opt -S -passes='default<O1>' -attributor-enable=full -print-pipeline-passes %s 2>&1 | FileCheck -check-prefix=FULL %s
 
 ; CGSCCLIGHT: attributor-light-cgscc,function-attrs
-; MODULELIGHT: openmp-opt,attributor-light,ipsccp
+; MODULELIGHT: openmp-opt,materialize-kernel-info,attributor-light,ipsccp
 
-; LIGHT: openmp-opt,attributor-light,
+; LIGHT: openmp-opt,materialize-kernel-info,attributor-light,
 ; LIGHT-SAME: attributor-light-cgscc,function-attrs
 
 
-; MODULE: ,openmp-opt,attributor,ipsccp
+; MODULE: ,openmp-opt,materialize-kernel-info,attributor,ipsccp
 
 ; CGSCC: inline,attributor-cgscc,function-attrs
 
-; FULL: openmp-opt,attributor,
+; FULL: openmp-opt,materialize-kernel-info,attributor,
 ; FULL-SAME: attributor-cgscc,function-attrs
 define ptr @return_arg(ptr %arg) {
   ret ptr %arg

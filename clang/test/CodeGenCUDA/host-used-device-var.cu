@@ -183,6 +183,7 @@ public:
 
 // Check the exact list of variables to ensure @_ZL2u4 is not among them.
 // DEV: @llvm.compiler.used = {{[^@]*}} @_Z10p_add_funcIiE
+// DEV-SAME: {{^[^@]*}} @_Z5kern1PPi_kernel_info
 // DEV-SAME: {{^[^@]*}} @_ZL15constexpr_var2a
 // DEV-SAME: {{^[^@]*}} @_ZL2u3
 // DEV-SAME: {{^[^@]*}} @_ZZ4fun1vE11static_var1

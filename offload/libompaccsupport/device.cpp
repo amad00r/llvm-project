@@ -670,6 +670,7 @@ static KernelLaunchArgsTy buildLaunchArgs(const KernelArgsTy &KernelArgs,
   LaunchArgs.OmpABIVersion = KernelArgs.Version;
   LaunchArgs.ReplayOutcome = ReplayOutcome;
   LaunchArgs.ArgSizes = KernelArgs.ArgSizes;
+  LaunchArgs.ArgBasePtrs = KernelArgs.ArgBasePtrs;
   LaunchArgs.Tripcount = KernelArgs.Tripcount;
   llvm::copy(KernelArgs.UserNumBlocks, LaunchArgs.UserNumBlocks);
   // Save the requested value before computing the effective number of blocks so
@@ -743,6 +744,7 @@ static void adjustEffectiveGeometry(GenericDeviceTy &GenericDevice,
 static void **resolveArgsAndDynPtrSlot(KernelArgsTy &KernelArgs,
                                        void **TgtVarsPtr, ptrdiff_t *TgtOffsets,
                                        llvm::SmallVector<void *> &Args,
+                                       llvm::SmallVector<void *> &ArgBasePtrs,
                                        llvm::SmallVector<void *> &Ptrs,
                                        llvm::SmallVector<int64_t> &ArgSizes,
                                        KernelLaunchArgsTy &LaunchArgs) {
@@ -772,6 +774,10 @@ static void **resolveArgsAndDynPtrSlot(KernelArgsTy &KernelArgs,
     return &Args[KernelArgs.NumArgs - 1];
 
   std::rotate(Args.begin(), Args.end() - 1, Args.end());
+
+  ArgBasePtrs.assign(LaunchArgs.ArgBasePtrs, LaunchArgs.ArgBasePtrs + KernelArgs.NumArgs);
+  std::rotate(ArgBasePtrs.begin(), ArgBasePtrs.end() - 1, ArgBasePtrs.end());
+  LaunchArgs.ArgBasePtrs = ArgBasePtrs.data();
 
   // Keep ArgSizes in sync with the rotated Args, if present.
   if (LaunchArgs.ArgSizes) {
@@ -828,7 +834,7 @@ int32_t DeviceTy::launchKernel(void *TgtEntryPtr, void **TgtVarsPtr,
                                ptrdiff_t *TgtOffsets, KernelArgsTy &KernelArgs,
                                KernelReplayOutcomeTy *ReplayOutcome,
                                AsyncInfoTy &AsyncInfo) {
-  llvm::SmallVector<void *> Args, Ptrs;
+  llvm::SmallVector<void *> Args, ArgBasePtrs, Ptrs;
   llvm::SmallVector<int64_t> ArgSizes;
 
   GenericDeviceTy &GenericDevice = RTL->getDevice(RTLDeviceID);
@@ -841,7 +847,7 @@ int32_t DeviceTy::launchKernel(void *TgtEntryPtr, void **TgtVarsPtr,
                           KernelLaunchInfo);
 
   void **DynPtrSlot = resolveArgsAndDynPtrSlot(
-      KernelArgs, TgtVarsPtr, TgtOffsets, Args, Ptrs, ArgSizes, LaunchArgs);
+      KernelArgs, TgtVarsPtr, TgtOffsets, Args, ArgBasePtrs, Ptrs, ArgSizes, LaunchArgs);
 
   auto DynCGroupMemFallback = static_cast<DynCGroupMemFallbackType>(
       KernelArgs.Flags.DynCGroupMemFallback);

@@ -27,6 +27,8 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Process.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <cstdint>
 
@@ -67,13 +69,185 @@ Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
                             DeviceImageTy &Image) {
   ImagePtr = &Image;
 
+  // TODO: it is overkill to open a stream for each kernel. also, it does not take into account multithreading i believe
+  if (const char *ProfilingFilename = getenv(ProfilingEnvar)) {
+    std::error_code EC;
+    ProfilingFile = std::make_unique<raw_fd_ostream>(ProfilingFilename, EC, sys::fs::OF_Append | sys::fs::OF_Text);
+    if (EC)
+      reportFatalUsageError(SmallString<128>{
+        "Unable to open file specified in `", ProfilingEnvar, "`: ", EC.message()
+      }.c_str());
+  }
+
+  GenericGlobalHandlerTy &GHandler = GenericDevice.Plugin.getGlobalHandler();
+
+  // Retrieve kernel information if possible.
+  const auto KernelInfoName = KernelInfo::getGlobalNameFor(Name);
+  if (GHandler.isSymbolInImage(GenericDevice, Image, KernelInfoName)) {
+    GlobalTy ImageKernelInfo(KernelInfoName);
+    if (auto Err = GHandler.getGlobalMetadataFromImage(GenericDevice, Image,
+                                                      ImageKernelInfo))
+      return Err;
+
+    const StringRef EncodedKernelInfo(static_cast<char *>(ImageKernelInfo.getPtr()), ImageKernelInfo.getSize() - /* null terminator */1);
+    ODBG(OLDT_Kernel) << "Found kernel info for `" << Name << "` = `" << EncodedKernelInfo << "`";
+
+    assert(!Info.Args);
+    assert(!Info.Versions);
+    Info = EncodedKernelInfo;
+
+    if (Info.Versions) {
+      for (const auto &VersionInfo : *Info.Versions) {
+        assert(GHandler.isSymbolInImage(GenericDevice, Image, VersionInfo.Symbol));
+        auto MaybeVersion = GenericDevice.constructKernel(VersionInfo.Symbol);
+        assert(MaybeVersion);
+        GenericKernelTy &Version = *MaybeVersion;
+        Error Err = Version.init(GenericDevice, Image);
+        assert(!Err);
+
+        // Insert the version in the decision tree
+        assert(!VersionInfo.Specializations.Specializations.empty());
+        std::reference_wrapper<std::unique_ptr<VersionDecisionTree::Node>> CurrentNode = VersionSelector.Root;
+        for (const auto &Specialization : VersionInfo.Specializations.Specializations) {
+          for (;;) {
+            if (!CurrentNode.get()) {
+              CurrentNode.get() = std::make_unique<VersionDecisionTree::Node>(VersionDecisionTree::Decision{ Specialization, {}, {} });
+              CurrentNode = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get())->True;
+              break;
+            }
+            if (auto *Decision = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get())) {
+              if (Decision->Specialization == Specialization) {
+                CurrentNode = Decision->True;
+                break;
+              }
+              CurrentNode = Decision->False;
+              continue;
+            }
+            assert(std::holds_alternative<std::reference_wrapper<GenericKernelTy>>(*CurrentNode.get()));
+
+            CurrentNode.get() = std::make_unique<VersionDecisionTree::Node>(VersionDecisionTree::Decision{ Specialization, {}, std::move(CurrentNode.get()) });
+            CurrentNode = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get())->True;
+            break;
+          }
+        }
+        while (CurrentNode.get()) {
+          auto *Decision = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get());
+          assert(Decision && "duplicated versions");
+          CurrentNode = Decision->False;
+        }
+        CurrentNode.get() = std::make_unique<VersionDecisionTree::Node>(std::in_place_type<std::reference_wrapper<GenericKernelTy>>, Version);
+      }
+
+      struct DOTFormat {
+        static void rec(const VersionDecisionTree::Decision &Decision, const SmallString<32> &PartialVersion, raw_string_ostream &OS) {
+          struct PrintVisitor {
+            const SmallString<32> &PartialVersion;
+            raw_string_ostream &OS;
+            void operator()(const GenericKernelTy &Version) { OS << Version.getName(); }
+            void operator()(const VersionDecisionTree::Decision &Decision) { OS << PartialVersion << Decision.Specialization.str(); }
+          };
+          struct RecVisitor {
+            const SmallString<32> &PartialVersion;
+            raw_string_ostream &OS;
+            void operator()(const GenericKernelTy &) {}
+            void operator()(const VersionDecisionTree::Decision &Decision) { rec(Decision, PartialVersion, OS); }
+          };
+          const SmallString<32> NewPartialVersion{ PartialVersion, Decision.Specialization.str() };
+          OS << "\"" << NewPartialVersion << "\"->\"";
+          if (Decision.True) std::visit(PrintVisitor{ NewPartialVersion, OS }, *Decision.True);
+          else OS << "=Original";
+          OS << "\"[label=\"1\"];\"" << NewPartialVersion << "\"->\"";
+          if (Decision.False) std::visit(PrintVisitor{ PartialVersion, OS }, *Decision.False);
+          else OS << "=Original";
+          OS << "\"[label=\"0\"];";
+          if (Decision.True) std::visit(RecVisitor{ NewPartialVersion, OS }, *Decision.True);
+          if (Decision.False) std::visit(RecVisitor{ PartialVersion, OS }, *Decision.False);
+        }
+        static std::string from(const VersionDecisionTree &Tree) {
+          std::string Result;
+          raw_string_ostream OS(Result);
+          OS << "digraph{";
+          if (Tree.Root) {
+            const auto *Decision = std::get_if<VersionDecisionTree::Decision>(&*Tree.Root);
+            assert(Decision);
+            rec(*Decision, {}, OS);
+          }
+          OS << "}";
+          return Result;
+        }
+      };
+      ODBG(OLDT_Kernel) << "Built version decision tree for `" << Name << "` in DOT format `" << DOTFormat::from(VersionSelector) << "`";
+    }
+  }
+
   return initImpl(GenericDevice, Image);
 }
+
+struct KernelArgTypeAndValue {
+  const KernelInfo::Argument::Type &Ty;
+  void *ValuePtr;
+};
+
+namespace llvm {
+
+// TODO: test that it works
+template <>
+struct format_provider<KernelArgTypeAndValue> {
+  static void format(const KernelArgTypeAndValue &Arg, raw_ostream &OS, StringRef) {
+    return Arg.Ty.visit(
+      [&](KernelInfo::Argument::Type::Unknown) { OS << "<unrepresentable>"; },
+      [&](KernelInfo::Argument::Type::Int I) {
+        switch (I.BitWidth) {
+        case 8: OS << *reinterpret_cast<uint8_t *>(Arg.ValuePtr); return;
+        case 16: OS << *reinterpret_cast<uint16_t *>(Arg.ValuePtr); return;
+        case 32: OS << *reinterpret_cast<uint32_t *>(Arg.ValuePtr); return;
+        case 64: OS << *reinterpret_cast<uint64_t *>(Arg.ValuePtr); return;
+        default: OS << "<unsupported bit width>"; return;
+        }
+      },
+      [&](KernelInfo::Argument::Type::Float) { OS << *reinterpret_cast<float *>(Arg.ValuePtr); },
+      [&](KernelInfo::Argument::Type::Double) { OS << *reinterpret_cast<double *>(Arg.ValuePtr); },
+      [&](KernelInfo::Argument::Type::Ptr) { OS << *reinterpret_cast<void **>(Arg.ValuePtr); }
+    );
+  }
+};
+
+} // end namespace llvm
 
 Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
                                        const KernelLaunchArgsTy &LaunchArgs,
                                        uint32_t NumThreads[3],
                                        uint32_t NumBlocks[3]) const {
+  assert(!Info.Args || Info.Args->size() == LaunchArgs.NumArgs);
+  assert(LaunchArgs.NumArgs == 0 || LaunchArgs.Args);
+  for (uint32_t I = 0; I < LaunchArgs.NumArgs; ++I) {
+    INFO(
+      OMP_INFOTYPE_PLUGIN_KERNEL, GenericDevice.getDeviceId(), "%s",
+      [&, this]() -> SmallString<128> {
+        KernelInfo::Argument::Type Ty;
+        if (Info.Args && I < Info.Args->size())
+          Ty = Info.Args.value()[I].Ty;
+
+        if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>(Ty.Variant)) return formatv(
+          "  arg[{}]={{ type={}, size={}, base_ptr={}, val={} }\n",
+          I,
+          Ty.str(),
+          LaunchArgs.ArgSizes ? LaunchArgs.ArgSizes[I] : -1,
+          LaunchArgs.ArgBasePtrs[I],
+          KernelArgTypeAndValue{ Ty, LaunchArgs.Args[I] }
+        );
+
+        return formatv(
+          "  arg[{}]={{ type={}, size={}, val={} }\n",
+          I,
+          Ty.str(),
+          LaunchArgs.ArgSizes ? LaunchArgs.ArgSizes[I] : -1,
+          KernelArgTypeAndValue{ Ty, LaunchArgs.Args[I] }
+        );
+      }().c_str()
+    );
+  }
+
   return printLaunchInfoDetails(GenericDevice, LaunchArgs, NumThreads,
                                 NumBlocks);
 }
@@ -87,15 +261,64 @@ Error GenericKernelTy::printLaunchInfoDetails(
 Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
                               KernelLaunchArgsTy &LaunchArgs,
                               AsyncInfoWrapperTy &AsyncInfoWrapper) const {
-  uint32_t EffectiveNumThreads[3] = {LaunchArgs.UserThreadLimit[0],
-                                     LaunchArgs.UserThreadLimit[1],
-                                     LaunchArgs.UserThreadLimit[2]};
-  uint32_t EffectiveNumBlocks[3] = {LaunchArgs.UserNumBlocks[0],
-                                    LaunchArgs.UserNumBlocks[1],
-                                    LaunchArgs.UserNumBlocks[2]};
+  const GenericKernelTy &KernelVersion = [&, this]() -> const GenericKernelTy & {
+    std::reference_wrapper<const std::unique_ptr<VersionDecisionTree::Node>> CurrentNode = VersionSelector.Root;
 
-  if (auto Err = printLaunchInfo(GenericDevice, LaunchArgs, EffectiveNumThreads,
-                                 EffectiveNumBlocks))
+    for (;;) {
+      if (!CurrentNode.get())
+        return *this;
+
+      if (const auto *Version = std::get_if<std::reference_wrapper<GenericKernelTy>>(&*CurrentNode.get()))
+        return *Version;
+
+      const auto *Decision = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get());
+      assert(Decision);
+      const bool Ok = Decision->Specialization.visit(
+        [&](KernelInfo::Version::Specialization::NoLoop) {
+          return LaunchArgs.UserThreadLimit[0]*LaunchArgs.UserNumBlocks[0] >= LaunchArgs.Tripcount;
+        },
+        [&, this](KernelInfo::Version::Specialization::NoAlias) {
+          assert(Info.Versions);
+          if (!Info.Args)
+            return false;
+
+          const auto It0 = std::find_if(Info.Args->begin(), Info.Args->end(), [](const KernelInfo::Argument &Arg) { return std::holds_alternative<KernelInfo::Argument::Type::Ptr>(Arg.Ty.Variant); });
+          assert(It0 != Info.Args->end());
+
+          for (auto It = std::next(It0); It != Info.Args->end(); ++It)
+            if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>(It->Ty.Variant))
+              if (LaunchArgs.ArgBasePtrs[std::distance(Info.Args->begin(), It0)] == LaunchArgs.ArgBasePtrs[std::distance(Info.Args->begin(), It)])
+                return false;
+
+          return true;
+        },
+        [&](KernelInfo::Version::Specialization::Align16) {
+          assert(Info.Versions);
+          if (!Info.Args)
+            return false;
+
+          const size_t Size = Info.Args->size();
+          // TODO: here we are assuming last arg is the dynptr
+          for (size_t I = 0; I < Size - 1; ++I)
+            if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>((*Info.Args)[I].Ty.Variant))
+              if (reinterpret_cast<uintptr_t>(*reinterpret_cast<void **>(LaunchArgs.Args[I])) & 0b1111)
+                return false;
+
+          return true;
+        },
+        [](KernelInfo::Version::Specialization::Unroll2) {
+          // TODO: implement
+          return false;
+        }
+      );
+
+      CurrentNode = Ok ? Decision->True : Decision->False;
+      continue;
+    }
+  }();
+
+  if (auto Err = KernelVersion.printLaunchInfo(GenericDevice, LaunchArgs, LaunchArgs.UserThreadLimit,
+                                 LaunchArgs.UserNumBlocks))
     return Err;
 
   uint32_t MaxBlockMemSize = GenericDevice.getMaxBlockSharedMemSize();
@@ -119,17 +342,53 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
 
     // Record the kernel prologue data before kernel launch.
     auto RRHandleOrErr = RecordReplay->recordPrologue(
-        *this, LaunchArgs, EffectiveNumBlocks, EffectiveNumThreads,
+        KernelVersion, LaunchArgs, LaunchArgs.UserNumBlocks, LaunchArgs.UserThreadLimit,
         LaunchArgs.DynCGroupMem);
     if (!RRHandleOrErr)
       return RRHandleOrErr.takeError();
     RRHandle = *RRHandleOrErr;
   }
 
-  if (auto Err =
-          launchImpl(GenericDevice, EffectiveNumThreads, EffectiveNumBlocks,
-                     LaunchArgs.DynCGroupMem, LaunchArgs, AsyncInfoWrapper))
-    return Err;
+  // Profiling csv header is kernel,grid_size_x,grid_size_y,grid_size_z,block_size_x,block_size_y,block_size_z,tripcount,parameters,start_timestamp_ns,end_timestamp_ns
+  if (ProfilingFile) {
+    *ProfilingFile << KernelVersion.Name << ','
+                   << LaunchArgs.UserNumBlocks[0] << ','
+                   << LaunchArgs.UserNumBlocks[1] << ','
+                   << LaunchArgs.UserNumBlocks[2] << ','
+                   << LaunchArgs.UserThreadLimit[0] << ','
+                   << LaunchArgs.UserThreadLimit[1] << ','
+                   << LaunchArgs.UserThreadLimit[2] << ','
+                   << LaunchArgs.Tripcount << ',';
+
+    assert(!Info.Args || Info.Args->size() == LaunchArgs.NumArgs);
+    if (LaunchArgs.NumArgs > 0)
+      for (size_t I = 0;;) {
+        if (Info.Args)
+          format_provider<KernelArgTypeAndValue>::format({ Info.Args.value()[I].Ty, LaunchArgs.Args[I] }, *ProfilingFile, {});
+        if (++I >= LaunchArgs.NumArgs)
+          break;
+        *ProfilingFile << ';';
+      }
+
+    *ProfilingFile << ',' << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << ',';
+
+    auto Err =
+          KernelVersion.launchImpl(GenericDevice, LaunchArgs.UserThreadLimit, LaunchArgs.UserNumBlocks,
+                     LaunchArgs.DynCGroupMem, LaunchArgs, AsyncInfoWrapper);
+
+    *ProfilingFile << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << '\n';
+
+    ProfilingFile->flush();
+
+    if (Err)
+      return Err;
+  }
+  else {
+    if (auto Err =
+            KernelVersion.launchImpl(GenericDevice, LaunchArgs.UserThreadLimit, LaunchArgs.UserNumBlocks,
+                       LaunchArgs.DynCGroupMem, LaunchArgs, AsyncInfoWrapper))
+      return Err;
+  }
 
   if (RecordReplay) {
     // Record replay requires synchronization.
@@ -137,7 +396,7 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
       return Err;
 
     // Record the epilogue data after kernel synchronization.
-    return RecordReplay->recordEpilogue(*this, RRHandle);
+    return RecordReplay->recordEpilogue(KernelVersion, RRHandle);
   }
   return Plugin::success();
 }

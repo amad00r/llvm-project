@@ -17,6 +17,7 @@
 #include <limits>
 #include <list>
 #include <map>
+#include <optional>
 #include <shared_mutex>
 #include <variant>
 #include <vector>
@@ -50,7 +51,9 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/TargetParser/Triple.h"
+#include "llvm/Transforms/Utils/MaterializedKernelInfo.h"
 
 using namespace llvm::offload::debug;
 
@@ -430,6 +433,8 @@ struct KernelLaunchArgsTy {
   /// Size of the argument data in bytes, one entry per \p Args element,
   /// possibly null.
   int64_t *ArgSizes = nullptr;
+  // TODO: 
+  void **ArgBasePtrs = nullptr;
   /// Tripcount for the teams / distribute loop, 0 otherwise.
   uint64_t Tripcount = 0;
   /// Amount of dynamic cgroup memory requested.
@@ -539,8 +544,28 @@ private:
   /// The kernel name.
   std::string Name;
 
+  /// The kernel information found in the device image.
+  KernelInfo Info;
+
+  struct VersionDecisionTree {
+    struct Decision;
+    using Node = std::variant<std::reference_wrapper<GenericKernelTy>, Decision>;
+    struct Decision {
+      KernelInfo::Version::Specialization Specialization;
+      std::unique_ptr<Node> True, False;
+    };
+    // TODO: explore starting from Decision instead of Node
+    std::unique_ptr<Node> Root;
+  };
+  VersionDecisionTree VersionSelector;
+
   /// The image that contains this kernel.
   DeviceImageTy *ImagePtr = nullptr;
+
+  // TODO: this should only be initialized once insead of per-kernel
+  static constexpr char ProfilingEnvar[] = "GPU_KERNEL_VERSIONING_PROFILE";
+  // TODO: we use unique_ptr instead of optional to avoid modifying the const qualifiers of the launch function. lets discuss later what to do
+  std::unique_ptr<llvm::raw_fd_ostream> ProfilingFile;
 
 protected:
   /// The static memory sized per block.

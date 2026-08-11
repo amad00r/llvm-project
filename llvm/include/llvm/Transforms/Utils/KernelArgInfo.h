@@ -26,9 +26,17 @@ public:
   using EncodeType = uint32_t;
 
 private:
+  using PayloadType = uint16_t;
+  using IndirectionType = uint8_t;
+
   static constexpr unsigned PayloadShift = 8;
+  static constexpr unsigned PayloadBits = 16;
+  static constexpr unsigned IndirectionShift = PayloadShift + PayloadBits;
   static constexpr EncodeType KindMask =
       static_cast<EncodeType>((1u << PayloadShift) - 1);
+  static constexpr EncodeType PayloadMask =
+      static_cast<EncodeType>((1u << PayloadBits) - 1);
+  static constexpr EncodeType IndirectionMask = KindMask;
 
   EncodeType Encoded;
 
@@ -37,36 +45,56 @@ public:
     Integer = 0,
     Float = 1,
     Double = 2,
-    Pointer = 3,
     Unknown = KindMask,
   };
 
 private:
-  explicit KernelArgInfo(Kind K, EncodeType Payload)
-      : Encoded((Payload << PayloadShift) | static_cast<EncodeType>(K)) {}
+  explicit KernelArgInfo(Kind K, PayloadType Payload,
+                         IndirectionType Indirection)
+      : Encoded((static_cast<EncodeType>(Indirection) << IndirectionShift) |
+                (static_cast<EncodeType>(Payload) << PayloadShift) |
+                static_cast<EncodeType>(K)) {}
 
   explicit KernelArgInfo(EncodeType Encoded) : Encoded(Encoded) {}
 
-public:
-  static KernelArgInfo getIntegerTy(EncodeType BitWidth) {
-    return KernelArgInfo(Kind::Integer, BitWidth);
+  PayloadType getPayload() const {
+    return (Encoded >> PayloadShift) & PayloadMask;
   }
 
-  static KernelArgInfo getFloatTy() { return KernelArgInfo(Kind::Float, 0); }
+public:
+  static KernelArgInfo getIntegerTy(PayloadType BitWidth,
+                                    IndirectionType Indirection = 0) {
+    return KernelArgInfo(Kind::Integer, BitWidth, Indirection);
+  }
 
-  static KernelArgInfo getDoubleTy() { return KernelArgInfo(Kind::Double, 0); }
+  static KernelArgInfo getFloatTy(IndirectionType Indirection = 0) {
+    return KernelArgInfo(Kind::Float, 0, Indirection);
+  }
 
-  static KernelArgInfo getPointerTy() {
-    return KernelArgInfo(Kind::Pointer, 0);
+  static KernelArgInfo getDoubleTy(IndirectionType Indirection = 0) {
+    return KernelArgInfo(Kind::Double, 0, Indirection);
+  }
+
+  static KernelArgInfo getPointerTy(KernelArgInfo Pointee) {
+    return KernelArgInfo(Pointee.getKind(), Pointee.getPayload(),
+                         Pointee.getIndirection() + 1);
+  }
+
+  static KernelArgInfo getOpaquePointerTy(IndirectionType Indirection = 0) {
+    return KernelArgInfo(Kind::Unknown, 0, Indirection + 1);
   }
 
   static KernelArgInfo getUnknownTy() {
-    return KernelArgInfo(Kind::Unknown, 0);
+    return KernelArgInfo(Kind::Unknown, 0, 0);
   }
 
   Kind getKind() const { return static_cast<Kind>(Encoded & KindMask); }
 
-  EncodeType getIntegerBitWidth() const { return Encoded >> PayloadShift; }
+  PayloadType getIntegerBitWidth() const { return getPayload(); }
+
+  IndirectionType getIndirection() const {
+    return (Encoded >> IndirectionShift) & IndirectionMask;
+  }
 
   EncodeType getEncodedLE() const {
     EncodeType E;
@@ -81,20 +109,27 @@ public:
   std::string typeStr() const {
     switch (getKind()) {
     case Kind::Integer:
-      return "i" + std::to_string(getIntegerBitWidth());
+      return "i" + std::to_string(getIntegerBitWidth()) +
+             std::string(getIndirection(), '*');
     case Kind::Float:
-      return "float";
+      return "float" + std::string(getIndirection(), '*');
     case Kind::Double:
-      return "double";
-    case Kind::Pointer:
-      return "ptr";
+      return "double" + std::string(getIndirection(), '*');
     case Kind::Unknown:
-      return "unknown";
+      if (getIndirection() == 0)
+        return "unknown";
+      return "ptr" + std::string(getIndirection() - 1, '*');
     }
   }
 
   std::string valueStr(void *Value) const {
     assert(Value);
+    if (getIndirection() > 0) {
+      std::ostringstream oss;
+      oss << *reinterpret_cast<void **>(Value);
+      return oss.str();
+    }
+
     switch (getKind()) {
     case Kind::Integer:
       switch (getIntegerBitWidth()) {
@@ -113,11 +148,6 @@ public:
       return std::to_string(*reinterpret_cast<float *>(Value));
     case Kind::Double:
       return std::to_string(*reinterpret_cast<double *>(Value));
-    case Kind::Pointer: {
-      std::ostringstream oss;
-      oss << *reinterpret_cast<void **>(Value);
-      return oss.str();
-    }
     case Kind::Unknown:
       return "<no representation>";
     }

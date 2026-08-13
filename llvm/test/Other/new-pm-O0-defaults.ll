@@ -18,10 +18,10 @@
 ; RUN:     | FileCheck %s --check-prefixes=CHECK,CHECK-DIS,CHECK-CORO,CHECK-ALLOCTOKEN
 ; RUN: opt -disable-verify -verify-analysis-invalidation=0 -debug-pass-manager \
 ; RUN:     -passes='thinlto-pre-link<O0>' -S %s 2>&1 \
-; RUN:     | FileCheck %s --check-prefixes=CHECK,CHECK-DEFAULT,CHECK-PRE-LINK,CHECK-CORO
+; RUN:     | FileCheck %s --check-prefixes=CHECK,CHECK-DEFAULT,CHECK-KERNEL-INFO,CHECK-PRE-LINK,CHECK-CORO
 ; RUN: opt -disable-verify -verify-analysis-invalidation=0 -debug-pass-manager \
 ; RUN:     -passes='lto-pre-link<O0>' -S %s 2>&1 \
-; RUN:     | FileCheck %s --check-prefixes=CHECK,CHECK-DEFAULT,CHECK-PRE-LINK,CHECK-CORO
+; RUN:     | FileCheck %s --check-prefixes=CHECK,CHECK-DEFAULT,CHECK-KERNEL-INFO,CHECK-PRE-LINK,CHECK-CORO
 ; RUN: opt -disable-verify -verify-analysis-invalidation=0 -debug-pass-manager \
 ; RUN:     -passes='thinlto<O0>' -S %s 2>&1 \
 ; RUN:     | FileCheck %s --check-prefixes=CHECK,CHECK-THINLTO
@@ -32,12 +32,11 @@
 ; CHECK-DIS: Running analysis: InnerAnalysisManagerProxy
 ; CHECK-DIS-NEXT: Running pass: EntryExitInstrumenterPass
 ; CHECK-DIS-NEXT: Running pass: AddDiscriminatorsPass
-; CHECK-DIS-NEXT: Running pass: MaterializeKernelInfoPass
 ; CHECK-DIS-NEXT: Running pass: AlwaysInlinerPass
 ; CHECK-DIS-NEXT: Running analysis: ProfileSummaryAnalysis
+; CHECK-KERNEL-INFO: Running pass: MaterializeKernelInfoPass
 ; CHECK-DEFAULT: Running analysis: InnerAnalysisManagerProxy
 ; CHECK-DEFAULT-NEXT: Running pass: EntryExitInstrumenterPass
-; CHECK-DEFAULT-NEXT: Running pass: MaterializeKernelInfoPass
 ; CHECK-DEFAULT-NEXT: Running pass: AlwaysInlinerPass
 ; CHECK-DEFAULT-NEXT: Running analysis: ProfileSummaryAnalysis
 ; CHECK-MATRIX: Running pass: LowerMatrixIntrinsicsPass
@@ -48,15 +47,13 @@
 ; CHECK-PRE-LINK: Running pass: CanonicalizeAliasesPass
 ; CHECK-PRE-LINK-NEXT: Running pass: NameAnonGlobalPass
 ; CHECK-PRE-LINK-NEXT: Running pass: AssignGUIDPass
-; CHECK-THINLTO: Running pass: MaterializeKernelInfoPass
-; CHECK-THINLTO-NEXT: Running pass: DropTypeTestsPass
+; CHECK-THINLTO: Running pass: DropTypeTestsPass
 ; CHECK-THINLTO-NEXT: Running pass: CoroConditionalWrapper
 ; CHECK-THINLTO-NEXT: Running pass: AllocTokenPass
 ; CHECK-THINLTO-NEXT: Running analysis: InnerAnalysisManagerProxy
 ; CHECK-THINLTO-NEXT: Running pass: EliminateAvailableExternallyPass
 ; CHECK-THINLTO-NEXT: Running pass: GlobalDCEPass
 ; CHECK-LTO: Running pass: CrossDSOCFIPass on [module]
-; CHECK-LTO-NEXT: Running pass: MaterializeKernelInfoPass
 ; CHECK-LTO-NEXT: Running pass: WholeProgramDevirtPass
 ; CHECK-LTO-NEXT: Running analysis: InnerAnalysisManagerProxy
 ; CHECK-LTO-NEXT: Running pass: LowerTypeTestsPass

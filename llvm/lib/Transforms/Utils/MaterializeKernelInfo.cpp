@@ -56,8 +56,6 @@ GlobalVariable *createKernelInfoGlobal(Module &M, StringRef Name,
 }
 
 bool materializeKernelInfo(Function &F) {
-  // FIXME: does not work when target is CPU. we could add a flag to the
-  // module to know if it is going through the offloading driver.
   if (!F.hasKernelCallingConv())
     return false;
 
@@ -82,6 +80,9 @@ bool materializeKernelInfo(Function &F) {
 
 PreservedAnalyses MaterializeKernelInfoPass::run(Module &M,
                                                  ModuleAnalysisManager &) {
+  if (!M.getTargetTriple().isGPU())
+    return PreservedAnalyses::all();
+
   bool Changed = false;
   for (Function &F : M)
     Changed |= materializeKernelInfo(F);

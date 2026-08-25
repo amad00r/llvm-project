@@ -54,8 +54,9 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/TargetParser/Triple.h"
-#include "llvm/Transforms/Utils/KernelArgInfo.h"
+#include "llvm/Transforms/Utils/MaterializedKernelInfo.h"
 
 using namespace llvm::offload::debug;
 
@@ -630,8 +631,8 @@ private:
   /// The kernel name.
   std::string Name;
 
-  /// The kernel argument type info.
-  std::optional<std::vector<KernelArgInfo>> ArgTypes;
+  /// The kernel information found in the device image.
+  std::optional<KernelInfo> Info;
 
   /// The image that contains this kernel.
   DeviceImageTy *ImagePtr = nullptr;

@@ -36,6 +36,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <string_view>
 
 using namespace llvm;
 using namespace omp;
@@ -78,6 +79,7 @@ Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
   GenericGlobalHandlerTy &GHandler = GenericDevice.Plugin.getGlobalHandler();
 
   // Retrieve kernel information if possible.
+  assert(!Info);
   const std::string KernelInfoName = Name + "_kernel_info";
   if (GHandler.isSymbolInImage(GenericDevice, Image, KernelInfoName)) {
     GlobalTy ImageKernelInfo(KernelInfoName);
@@ -85,15 +87,16 @@ Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
                                                        ImageKernelInfo))
       return Err;
 
-    assert(!ArgTypes);
-    ArgTypes.emplace();
-    const size_t NumArgs =
-        ImageKernelInfo.getSize() / sizeof(KernelArgInfo::EncodeType);
-    ArgTypes->reserve(NumArgs);
-    for (size_t i = 0; i < NumArgs; ++i)
-      ArgTypes->emplace_back(KernelArgInfo::fromEncodedLE(static_cast<void *>(
-          static_cast<KernelArgInfo::EncodeType *>(ImageKernelInfo.getPtr()) +
-          i)));
+    const StringRef EncodedKernelInfo(static_cast<char *>(ImageKernelInfo.getPtr()), ImageKernelInfo.getSize() - /* null terminator */1);
+    Info.emplace(EncodedKernelInfo);
+
+    ODBG(OLDT_Kernel) << "Found kernel info for `" << getName() << "`:";
+    ODBG(OLDT_Kernel) << "  " << KernelInfoName << " = \"" << EncodedKernelInfo << "\"";
+    size_t I = 0;
+    for (const auto &Arg : Info->Args)
+      ODBG(OLDT_Kernel) << "  typeof arg[" << I++ << "] = " << Arg.Ty.str();
+  } else {
+    ODBG(OLDT_Kernel) << "Failed to read kernel info for `" << getName() << "`";
   }
 
   // Retrieve kernel environment object for the kernel.
@@ -198,6 +201,29 @@ GenericKernelTy::getKernelLaunchEnvironment(
   return static_cast<KernelLaunchEnvironmentTy *>(*AllocOrErr);
 }
 
+namespace {
+
+llvm::SmallString<32> formatValueBasedOnKernelArgInfo(const KernelInfo::Argument::Type &Ty, void *Val) {
+  using namespace std::string_view_literals;
+  return Ty.visit(
+    [](KernelInfo::Argument::Type::Unknown) -> llvm::SmallString<32> { return StringRef("<unrepresentable>"sv); },
+    [Val](KernelInfo::Argument::Type::Int I) -> llvm::SmallString<32> {
+      switch (I.BitWidth) {
+      case 8: return llvm::formatv("{}", *reinterpret_cast<uint8_t *>(Val));
+      case 16: return llvm::formatv("{}", *reinterpret_cast<uint16_t *>(Val));
+      case 32: return llvm::formatv("{}", *reinterpret_cast<uint32_t *>(Val));
+      case 64: return llvm::formatv("{}", *reinterpret_cast<uint64_t *>(Val));
+      default: return StringRef("<unsupported bit width>"sv);
+      }
+    },
+    [Val](KernelInfo::Argument::Type::Float) -> llvm::SmallString<32> { return llvm::formatv("{}", *reinterpret_cast<float *>(Val)); },
+    [Val](KernelInfo::Argument::Type::Double) -> llvm::SmallString<32> { return llvm::formatv("{}", *reinterpret_cast<double *>(Val)); },
+    [Val](KernelInfo::Argument::Type::Ptr) -> llvm::SmallString<32> { return llvm::formatv("{}", *reinterpret_cast<void **>(Val)); }
+  );
+}
+
+} // namespace
+
 Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
                                        const KernelLaunchArgsTy &LaunchArgs,
                                        uint32_t NumThreads[3],
@@ -208,15 +234,22 @@ Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
        getName(), NumBlocks[0], NumBlocks[1], NumBlocks[2], NumThreads[0],
        NumThreads[1], NumThreads[2], getExecutionModeName());
 
-  assert(!ArgTypes || ArgTypes->size() == LaunchArgs.NumArgs);
+  
+
+  assert(!Info || Info->Args.size() == LaunchArgs.NumArgs);
+  assert(LaunchArgs.NumArgs == 0 || LaunchArgs.Args);
   for (uint32_t I = 0; I < LaunchArgs.NumArgs; ++I) {
-    KernelArgInfo TypeInfo = KernelArgInfo::getUnknownTy();
-    if (ArgTypes && I < ArgTypes->size())
-      TypeInfo = (*ArgTypes)[I];
+    KernelInfo::Argument::Type Ty;
+    if (Info && I < Info->Args.size())
+      Ty = Info->Args[I].Ty;
+
+    const SmallString<16> TyStr = Ty.str();
+    const SmallString<32> ValueStr = formatValueBasedOnKernelArgInfo(Ty, LaunchArgs.Args[I]);
 
     INFO(OMP_INFOTYPE_PLUGIN_KERNEL, GenericDevice.getDeviceId(),
-         "  arg[%u]={ type=%s, val=%s }\n", I, TypeInfo.typeStr().data(),
-         TypeInfo.valueStr(LaunchArgs.Args[I]).data());
+         "  arg[%u]={ type=%.*s, val=%.*s }\n", I,
+         static_cast<int>(TyStr.size()), TyStr.data(),
+         static_cast<int>(ValueStr.size()), ValueStr.data());
   }
 
   return printLaunchInfoDetails(GenericDevice, LaunchArgs, NumThreads,

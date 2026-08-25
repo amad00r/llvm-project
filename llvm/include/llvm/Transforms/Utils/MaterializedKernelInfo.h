@@ -34,17 +34,38 @@ struct KernelInfo {
       template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
     public:
-      struct Unknown {};
-      struct Int { unsigned BitWidth; };
-      struct Float {};
-      struct Double {};
-      struct Ptr {};
+      struct Unknown {
+        bool operator==(Unknown) const { return true; }
+        bool operator!=(Unknown) const { return false; }
+      };
+      struct Int {
+        unsigned BitWidth;
+        bool operator==(const Int &Other) const { return BitWidth == Other.BitWidth; }
+        bool operator!=(const Int &Other) const { return !(*this == Other); }
+      };
+      struct Float {
+        bool operator==(Float) const { return true; }
+        bool operator!=(Float) const { return false; }
+      };
+      struct Double {
+        bool operator==(Double) const { return true; }
+        bool operator!=(Double) const { return false; }
+      };
+      struct Ptr {
+        bool operator==(Ptr) const { return true; }
+        bool operator!=(Ptr) const { return false; }
+      };
       std::variant<Unknown, Int, Float, Double, Ptr> Variant;
 
       template <typename ...Fn>
       decltype(auto) visit(Fn &&... F) const {
         return std::visit(overloaded{ std::forward<Fn>(F)... }, Variant);
       }
+
+      bool operator==(const Type &Other) const {
+        return Variant == Other.Variant;
+      }
+      bool operator!=(const Type &Other) const { return !(*this == Other); }
 
       SmallString<16> str() const {
         using namespace std::string_view_literals;
@@ -77,6 +98,9 @@ struct KernelInfo {
       )
     {
     }
+
+    bool operator==(const Argument &Other) const { return Ty == Other.Ty; }
+    bool operator!=(const Argument &Other) const { return !(*this == Other); }
   };
 
   SmallVector<Argument, 8> Args;
@@ -94,6 +118,9 @@ struct KernelInfo {
     }())
   {
   }
+
+  bool operator==(const KernelInfo &Other) const { return Args == Other.Args; }
+  bool operator!=(const KernelInfo &Other) const { return !(*this == Other); }
 
   SmallString<128> str() const {
     if (Args.empty())

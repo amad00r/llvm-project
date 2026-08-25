@@ -41,3 +41,17 @@ define amdgpu_kernel void @typed_kernel(i32 %i32, i64 %i64, float %f32,
 define amdgpu_kernel void @vector_unknown_kernel(<2 x i32> %v) {
   ret void
 }
+
+; CHECK-DAG: @preexisting_kernel_info_kernel_info = protected unnamed_addr addrspace(1) constant [4 x i8] c"i32\00"
+@preexisting_kernel_info_kernel_info = protected unnamed_addr addrspace(1) constant [4 x i8] c"i32\00"
+
+define amdgpu_kernel void @preexisting_kernel_info(i32 %x) {
+  ret void
+}
+
+; CHECK-DAG: @zero_initialized_kernel_info = protected unnamed_addr addrspace(1) constant [1 x i8] zeroinitializer
+@zero_initialized_kernel_info = protected unnamed_addr addrspace(1) constant [1 x i8] zeroinitializer
+
+define amdgpu_kernel void @zero_initialized() {
+  ret void
+}

@@ -634,6 +634,9 @@ private:
   /// The kernel information found in the device image.
   std::optional<KernelInfo> Info;
 
+  /// The no-loop version of the kernel
+  GenericKernelTy *NoLoopVersion = nullptr;
+
   /// The image that contains this kernel.
   DeviceImageTy *ImagePtr = nullptr;
 

@@ -252,6 +252,7 @@
 #include "llvm/Transforms/IPO/GlobalDCE.h"
 #include "llvm/Transforms/IPO/GlobalOpt.h"
 #include "llvm/Transforms/IPO/GlobalSplit.h"
+#include "llvm/Transforms/IPO/GPUKernelVersioning.h"
 #include "llvm/Transforms/IPO/HotColdSplitting.h"
 #include "llvm/Transforms/IPO/InferFunctionAttrs.h"
 #include "llvm/Transforms/IPO/Instrumentor.h"

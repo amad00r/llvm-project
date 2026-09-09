@@ -73,60 +73,84 @@ void AsyncInfoWrapperTy::finalize(Error &Err) {
 
 Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
                             DeviceImageTy &Image) {
-
-  ImagePtr = &Image;
-
   GenericGlobalHandlerTy &GHandler = GenericDevice.Plugin.getGlobalHandler();
-
-  // Retrieve kernel information if possible.
-  assert(!Info);
-  const std::string KernelInfoName = Name + "_kernel_info";
-  if (GHandler.isSymbolInImage(GenericDevice, Image, KernelInfoName)) {
-    GlobalTy ImageKernelInfo(KernelInfoName);
-    if (auto Err = GHandler.getGlobalMetadataFromImage(GenericDevice, Image,
-                                                       ImageKernelInfo))
-      return Err;
-
-    const StringRef EncodedKernelInfo(static_cast<char *>(ImageKernelInfo.getPtr()), ImageKernelInfo.getSize() - /* null terminator */1);
-    Info.emplace(EncodedKernelInfo);
-
-    ODBG(OLDT_Kernel) << "Found kernel info for `" << getName() << "`:";
-    ODBG(OLDT_Kernel) << "  " << KernelInfoName << " = \"" << EncodedKernelInfo << "\"";
-    size_t I = 0;
-    for (const auto &Arg : Info->Args)
-      ODBG(OLDT_Kernel) << "  typeof arg[" << I++ << "] = " << Arg.Ty.str();
-  } else {
-    ODBG(OLDT_Kernel) << "Failed to read kernel info for `" << getName() << "`";
-  }
 
   // Retrieve kernel environment object for the kernel.
   std::string EnvironmentName = std::string(Name) + "_kernel_environment";
+  KernelEnvironmentTy KEnv;
   if (GHandler.isSymbolInImage(GenericDevice, Image, EnvironmentName)) {
-    GlobalTy KernelEnv(EnvironmentName, sizeof(KernelEnvironment),
-                       &KernelEnvironment);
+    GlobalTy KernelEnv(EnvironmentName, sizeof(KEnv), &KEnv);
     if (auto Err =
-            GHandler.readGlobalFromImage(GenericDevice, *ImagePtr, KernelEnv))
+            GHandler.readGlobalFromImage(GenericDevice, Image, KernelEnv))
       return Err;
   } else {
-    KernelEnvironment = KernelEnvironmentTy{};
+    KEnv = KernelEnvironmentTy{};
     ODBG(OLDT_Kernel) << "Failed to read kernel environment for '" << getName()
                       << "' Using default Bare (0) execution mode";
   }
 
-  // Max = Config.Max > 0 ? min(Config.Max, Device.Max) : Device.Max;
-  MaxNumThreads = KernelEnvironment.Configuration.MaxThreads > 0
-                      ? std::min(KernelEnvironment.Configuration.MaxThreads,
-                                 int32_t(GenericDevice.getThreadLimit()))
-                      : GenericDevice.getThreadLimit();
+  static auto CommonInit = [](GenericKernelTy &Kernel, GenericDeviceTy &GenericDevice, DeviceImageTy &Image, const KernelEnvironmentTy &KernelEnvironment) {  
+    GenericGlobalHandlerTy &GHandler = GenericDevice.Plugin.getGlobalHandler();
 
-  // Pref = Config.Pref > 0 ? max(Config.Pref, Device.Pref) : Device.Pref;
-  PreferredNumThreads =
-      KernelEnvironment.Configuration.MinThreads > 0
-          ? std::max(KernelEnvironment.Configuration.MinThreads,
-                     int32_t(GenericDevice.getDefaultNumThreads()))
-          : GenericDevice.getDefaultNumThreads();
+    Kernel.ImagePtr = &Image;
 
-  return initImpl(GenericDevice, Image);
+    // Retrieve kernel information if possible.
+    assert(!Kernel.Info);
+    const std::string KernelInfoName = Kernel.Name + "_kernel_info";
+    if (GHandler.isSymbolInImage(GenericDevice, Image, KernelInfoName)) {
+      GlobalTy ImageKernelInfo(KernelInfoName);
+      if (auto Err = GHandler.getGlobalMetadataFromImage(GenericDevice, Image,
+                                                        ImageKernelInfo))
+        return Err;
+
+      const StringRef EncodedKernelInfo(static_cast<char *>(ImageKernelInfo.getPtr()), ImageKernelInfo.getSize() - /* null terminator */1);
+      Kernel.Info.emplace(EncodedKernelInfo);
+
+      ODBG(OLDT_Kernel) << "Found kernel info for `" << Kernel.Name << "`:";
+      ODBG(OLDT_Kernel) << "  " << KernelInfoName << " = \"" << EncodedKernelInfo << "\"";
+      size_t I = 0;
+      for (const auto &Arg : Kernel.Info->Args)
+        ODBG(OLDT_Kernel) << "  typeof arg[" << I++ << "] = " << Arg.Ty.str();
+    } else {
+      ODBG(OLDT_Kernel) << "Failed to read kernel info for `" << Kernel.Name << "`";
+    }
+
+    // Max = Config.Max > 0 ? min(Config.Max, Device.Max) : Device.Max;
+    Kernel.MaxNumThreads = KernelEnvironment.Configuration.MaxThreads > 0
+                        ? std::min(KernelEnvironment.Configuration.MaxThreads,
+                                  int32_t(GenericDevice.getThreadLimit()))
+                        : GenericDevice.getThreadLimit();
+
+    // Pref = Config.Pref > 0 ? max(Config.Pref, Device.Pref) : Device.Pref;
+    Kernel.PreferredNumThreads =
+        KernelEnvironment.Configuration.MinThreads > 0
+            ? std::max(KernelEnvironment.Configuration.MinThreads,
+                      int32_t(GenericDevice.getDefaultNumThreads()))
+            : GenericDevice.getDefaultNumThreads();
+
+    Kernel.KernelEnvironment = KernelEnvironment;
+
+    return Kernel.initImpl(GenericDevice, Image);
+  };
+
+  // Retrieve the no-loop version of the kernel if available.
+  std::string NoLoopVersionName = std::string(Name) + ".noloop";
+  if (GHandler.isSymbolInImage(GenericDevice, Image, NoLoopVersionName)) {
+    if (auto MaybeNoLoopVersion = GenericDevice.constructKernel(NoLoopVersionName)) {
+      if (!CommonInit(*MaybeNoLoopVersion, GenericDevice, Image, KEnv)) {
+        NoLoopVersion = &*MaybeNoLoopVersion;
+        assert(NoLoopVersion->isSPMDMode());
+      } else
+        ODBG(OLDT_Kernel) << "Failed to initialize noloop version of kernel `" << Name << "`";
+    } else {
+      ODBG(OLDT_Kernel) << "Failed to construct noloop version of kernel `" << Name << "`";
+    }
+    ODBG(OLDT_Kernel) << "found noloop version of kernel `" << Name << "`";
+  } else {
+    ODBG(OLDT_Kernel) << "noloop version of kernel `" << Name << "` does not exist";
+  }
+
+  return CommonInit(*this, GenericDevice, Image, KEnv);
 }
 
 Expected<KernelLaunchEnvironmentTy *>
@@ -234,8 +258,6 @@ Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
        getName(), NumBlocks[0], NumBlocks[1], NumBlocks[2], NumThreads[0],
        NumThreads[1], NumThreads[2], getExecutionModeName());
 
-  
-
   assert(!Info || Info->Args.size() == LaunchArgs.NumArgs);
   assert(LaunchArgs.NumArgs == 0 || LaunchArgs.Args);
   for (uint32_t I = 0; I < LaunchArgs.NumArgs; ++I) {
@@ -312,28 +334,28 @@ GenericKernelTy::prepareBlockMemory(GenericDeviceTy &GenericDevice,
 Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
                               KernelLaunchArgsTy &LaunchArgs,
                               AsyncInfoWrapperTy &AsyncInfoWrapper) const {
-  uint32_t EffectiveNumThreads[3] = {LaunchArgs.UserThreadLimit[0],
-                                     LaunchArgs.UserThreadLimit[1],
-                                     LaunchArgs.UserThreadLimit[2]};
-  uint32_t EffectiveNumBlocks[3] = {LaunchArgs.UserNumBlocks[0],
-                                    LaunchArgs.UserNumBlocks[1],
-                                    LaunchArgs.UserNumBlocks[2]};
-
   // Multidimensional is only supported with bare mode for now.
   assert(isBareMode() ||
-         EffectiveNumThreads[1] == 1 && EffectiveNumThreads[2] == 1 &&
-             EffectiveNumBlocks[1] == 1 && EffectiveNumBlocks[2] == 1 &&
+         LaunchArgs.UserThreadLimit[1] == 1 && LaunchArgs.UserThreadLimit[2] == 1 &&
+             LaunchArgs.UserThreadLimit[1] == 1 && LaunchArgs.UserThreadLimit[2] == 1 &&
              "Non-bare mode should only use the first thread and block "
              "dimensions");
 
   assert(!LaunchArgs.Flags.StrictBlocks ||
-         EffectiveNumBlocks[0] > 0 && EffectiveNumBlocks[1] > 0 &&
-             EffectiveNumBlocks[2] > 0 &&
+         LaunchArgs.UserNumBlocks[0] > 0 && LaunchArgs.UserNumBlocks[1] > 0 &&
+             LaunchArgs.UserNumBlocks[2] > 0 &&
              "Strict requires number of blocks greater than zero");
   assert(!LaunchArgs.Flags.StrictThreads ||
-         EffectiveNumThreads[0] > 0 && EffectiveNumThreads[1] > 0 &&
-             EffectiveNumThreads[2] > 0 &&
+         LaunchArgs.UserThreadLimit[0] > 0 && LaunchArgs.UserThreadLimit[1] > 0 &&
+             LaunchArgs.UserThreadLimit[2] > 0 &&
              "Strict requires number of threads greater than zero");
+
+  uint32_t EffectiveNumThreads[3] = {LaunchArgs.UserThreadLimit[0],
+                                    LaunchArgs.UserThreadLimit[1],
+                                    LaunchArgs.UserThreadLimit[2]};
+  uint32_t EffectiveNumBlocks[3] = {LaunchArgs.UserNumBlocks[0],
+                                    LaunchArgs.UserNumBlocks[1],
+                                    LaunchArgs.UserNumBlocks[2]};
 
   // Calculate or adjust the effective number of threads and blocks if needed.
   if (!LaunchArgs.Flags.StrictThreads)
@@ -346,7 +368,16 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
         EffectiveNumThreads[0], LaunchArgs.Flags.StrictThreads,
         LaunchArgs.UserThreadLimit[0] > 0);
 
-  auto DynBlockMemConfOrErr = prepareBlockMemory(
+  const GenericKernelTy &SelectedKernel = [&, this]() -> const GenericKernelTy & {
+    if (!NoLoopVersion) return *this;
+    assert(isSPMDMode());
+    assert(NoLoopVersion->isSPMDMode());
+    if (EffectiveNumThreads[0]*EffectiveNumBlocks[0] >= LaunchArgs.Tripcount)
+      return *NoLoopVersion;
+    return *this;
+  }();
+
+  auto DynBlockMemConfOrErr = SelectedKernel.prepareBlockMemory(
       GenericDevice, LaunchArgs,
       EffectiveNumBlocks[0] * EffectiveNumBlocks[1] * EffectiveNumBlocks[2]);
   if (!DynBlockMemConfOrErr)
@@ -357,9 +388,9 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
     AsyncInfoWrapper.freeAllocationAfterSynchronization(
         DynBlockMemConf.FallbackPtr, TargetAllocTy::TARGET_ALLOC_DEVICE);
 
-  auto KernelLaunchEnvOrErr =
-      getKernelLaunchEnvironment(GenericDevice, LaunchArgs, DynBlockMemConf,
-                                 AsyncInfoWrapper, EffectiveNumBlocks[0]);
+  auto KernelLaunchEnvOrErr = SelectedKernel.getKernelLaunchEnvironment(
+        GenericDevice, LaunchArgs, DynBlockMemConf,
+        AsyncInfoWrapper, EffectiveNumBlocks[0]);
   if (!KernelLaunchEnvOrErr)
     return KernelLaunchEnvOrErr.takeError();
 
@@ -369,7 +400,7 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
   if (LaunchArgs.DynPtrSlot && *KernelLaunchEnvOrErr)
     *LaunchArgs.DynPtrSlot = *KernelLaunchEnvOrErr;
 
-  if (auto Err = printLaunchInfo(GenericDevice, LaunchArgs, EffectiveNumThreads,
+  if (auto Err = SelectedKernel.printLaunchInfo(GenericDevice, LaunchArgs, EffectiveNumThreads,
                                  EffectiveNumBlocks))
     return Err;
 
@@ -382,7 +413,7 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
 
     // Record the kernel prologue data before kernel launch.
     auto RRHandleOrErr = RecordReplay->recordPrologue(
-        *this, LaunchArgs, EffectiveNumBlocks, EffectiveNumThreads,
+        SelectedKernel, LaunchArgs, EffectiveNumBlocks, EffectiveNumThreads,
         DynBlockMemConf.NativeSize);
     if (!RRHandleOrErr)
       return RRHandleOrErr.takeError();
@@ -390,7 +421,7 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
   }
 
   if (auto Err =
-          launchImpl(GenericDevice, EffectiveNumThreads, EffectiveNumBlocks,
+          SelectedKernel.launchImpl(GenericDevice, EffectiveNumThreads, EffectiveNumBlocks,
                      DynBlockMemConf.NativeSize, LaunchArgs, AsyncInfoWrapper))
     return Err;
 
@@ -400,7 +431,7 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
       return Err;
 
     // Record the epilogue data after kernel synchronization.
-    return RecordReplay->recordEpilogue(*this, RRHandle);
+    return RecordReplay->recordEpilogue(SelectedKernel, RRHandle);
   }
   return Plugin::success();
 }

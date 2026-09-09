@@ -60,6 +60,7 @@
 #include "llvm/Transforms/IPO/GlobalDCE.h"
 #include "llvm/Transforms/IPO/GlobalOpt.h"
 #include "llvm/Transforms/IPO/GlobalSplit.h"
+#include "llvm/Transforms/IPO/GPUKernelVersioning.h"
 #include "llvm/Transforms/IPO/HotColdSplitting.h"
 #include "llvm/Transforms/IPO/InferFunctionAttrs.h"
 #include "llvm/Transforms/IPO/Inliner.h"
@@ -1194,6 +1195,8 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
           PGOIndirectCallPromotion(true /* IsInLTO */, true /* SamplePGO */));
   }
 
+  MPM.addPass(GPUKernelVersioningPass());
+
   // Try to perform OpenMP specific optimizations on the module. This is a
   // (quick!) no-op if there are no OpenMP runtime calls present in the module.
   MPM.addPass(OpenMPOptPass(Phase));
@@ -2069,6 +2072,8 @@ PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
     MPM.addPass(RequireAnalysisPass<ProfileSummaryAnalysis, Module>());
   }
 
+  MPM.addPass(GPUKernelVersioningPass());
+
   // Try to run OpenMP optimizations, quick no-op if no OpenMP metadata present.
   MPM.addPass(OpenMPOptPass(ThinOrFullLTOPhase::FullLTOPostLink));
 
@@ -2210,6 +2215,8 @@ PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
 
   // Optimize globals again after we ran the inliner.
   MPM.addPass(GlobalOptPass());
+
+  MPM.addPass(GPUKernelVersioningPass());
 
   // Run the OpenMPOpt pass again after global optimizations.
   MPM.addPass(OpenMPOptPass(ThinOrFullLTOPhase::FullLTOPostLink));

@@ -33,6 +33,8 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Process.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <cstdint>
 #include <limits>
@@ -420,10 +422,59 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
     RRHandle = *RRHandleOrErr;
   }
 
-  if (auto Err =
+  // Profiling csv header is kernel,grid_size_x,grid_size_y,grid_size_z,block_size_x,block_size_y,block_size_z,tripcount,parameters,start_timestamp_ns,end_timestamp_ns
+  // TODO: it is overkill to open a stream for each launch, but works
+  static constexpr char ProfilingEnvar[] = "GPU_KERNEL_VERSIONING_PROFILE";
+  if (const auto MaybeProfilingFile = sys::Process::GetEnv(ProfilingEnvar)) {
+    SmallString<256> Entry;
+    raw_svector_ostream OS(Entry);
+
+    OS << SelectedKernel.Name << ','
+       << EffectiveNumBlocks[0] << ','
+       << EffectiveNumBlocks[1] << ','
+       << EffectiveNumBlocks[2] << ','
+       << EffectiveNumThreads[0] << ','
+       << EffectiveNumThreads[1] << ','
+       << EffectiveNumThreads[2] << ','
+       << LaunchArgs.Tripcount << ',';
+
+    assert(!Info || LaunchArgs.NumArgs == Info->Args.size());
+    if (LaunchArgs.NumArgs > 0) {
+      for (size_t I = 0;;) {
+        if (Info)
+          OS << formatValueBasedOnKernelArgInfo(Info->Args[I].Ty, LaunchArgs.Args[I]);
+        if (++I >= LaunchArgs.NumArgs)
+          break;
+        OS << ';';
+      }
+    }
+
+    OS << ',' << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << ','; 
+
+    auto Err =
           SelectedKernel.launchImpl(GenericDevice, EffectiveNumThreads, EffectiveNumBlocks,
-                     DynBlockMemConf.NativeSize, LaunchArgs, AsyncInfoWrapper))
-    return Err;
+                     DynBlockMemConf.NativeSize, LaunchArgs, AsyncInfoWrapper);
+
+    OS << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << '\n'; 
+
+    std::error_code EC;
+    raw_fd_ostream File(*MaybeProfilingFile, EC, sys::fs::OF_Append | sys::fs::OF_Text);
+    if (EC)
+      reportFatalUsageError(SmallString<128>{
+        "Unable to open file specified in `", ProfilingEnvar, "`: ", EC.message()
+      }.c_str());
+    File.SetUnbuffered();
+    File << Entry;
+
+    if (Err)
+      return Err;
+  }
+  else {
+    if (auto Err =
+            SelectedKernel.launchImpl(GenericDevice, EffectiveNumThreads, EffectiveNumBlocks,
+                       DynBlockMemConf.NativeSize, LaunchArgs, AsyncInfoWrapper))
+      return Err;
+  }  
 
   if (RecordReplay) {
     // Record replay requires synchronization.

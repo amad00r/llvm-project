@@ -19,21 +19,25 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/STLExtras.h"
 #include <variant>
 #include <string>
-#include <string_view>
 #include <utility>
 
 namespace llvm {
 
 struct KernelInfo {
-  struct Argument {
-    class Type {
-    private:
-      template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
-      template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
+  template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
+  template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
-    public:
+  static std::string getGlobalNameFor(StringRef KernelName) {
+    return (KernelName + "_kernel_info").str();
+  }
+
+  struct Argument {
+    struct Type {
       struct Unknown {
         bool operator==(Unknown) const { return true; }
         bool operator!=(Unknown) const { return false; }
@@ -68,13 +72,12 @@ struct KernelInfo {
       bool operator!=(const Type &Other) const { return !(*this == Other); }
 
       SmallString<16> str() const {
-        using namespace std::string_view_literals;
         return visit(
-          [](Unknown) -> SmallString<16> { return { "unknown"sv }; },
-          [](Int I) -> SmallString<16> { return { "i"sv, std::to_string(I.BitWidth) }; },
-          [](Float) -> SmallString<16> { return { "float"sv }; },
-          [](Double) -> SmallString<16> { return { "double"sv }; },
-          [](Ptr) -> SmallString<16> { return { "ptr"sv }; }
+          [](Unknown) -> SmallString<16> { return { "unknown" }; },
+          [](Int I) -> SmallString<16> { return { "i", std::to_string(I.BitWidth) }; },
+          [](Float) -> SmallString<16> { return { "float" }; },
+          [](Double) -> SmallString<16> { return { "double" }; },
+          [](Ptr) -> SmallString<16> { return { "ptr" }; }
         );
       }
     };
@@ -103,31 +106,115 @@ struct KernelInfo {
     bool operator!=(const Argument &Other) const { return !(*this == Other); }
   };
 
-  SmallVector<Argument, 8> Args;
+  struct Version {
+    struct Specialization {
+      struct NoLoop {};
+      struct NoAlias {};
+      struct ArgAlignment { unsigned ArgNo, Alignment; };
+      std::variant<NoLoop, NoAlias, ArgAlignment> Variant;
+      template <typename ...Fn>
+      decltype(auto) visit(Fn &&... F) const {
+        return std::visit(overloaded{ std::forward<Fn>(F)... }, Variant);
+      }
+    };
+    
+    // TODO: this should be a set if we want to compare Versions. otherwise, versions with permutated specializations are considered to be different
+    SmallVector<Specialization, 8> Specializations;
+
+    Version() = default;
+
+    Version(std::initializer_list<Specialization> Init)
+      : Specializations(Init)
+    {}
+
+    Version(StringRef Str) {
+      const bool Ok = Str.consume_front(".");
+      assert(Ok && "A version always starts with a dot");
+      for (StringRef Specialization : split(Str, '.')) {
+        if (Specialization == StringRef("noloop")) {
+          Specializations.push_back({ Specialization::NoLoop{} });
+          continue;
+        }
+        if (Specialization == StringRef("noalias")) {
+          Specializations.push_back({ Specialization::NoAlias{} });
+          continue;
+        }
+        if (Specialization.consume_front("align")) {
+          const auto [AlignStr, ArgNoStr] = Specialization.split('$');
+          unsigned Align, ArgNo;
+          const bool AlignOk = AlignStr.getAsInteger(10, Align);
+          assert(!AlignOk);
+          const bool ArgNoOk = ArgNoStr.getAsInteger(10, ArgNo);
+          assert(!ArgNoOk);
+          Specializations.push_back({ Specialization::ArgAlignment{ ArgNo, Align } });
+          continue;
+        }
+        llvm_unreachable("unexpected specialization");
+      }
+    }
+
+    SmallString<128> str() const {
+      SmallString<128> VersionText;
+      raw_svector_ostream OS(VersionText);
+      for (const auto &S : Specializations) S.visit(
+        [&](const Specialization::NoLoop &) { OS << ".noloop"; },
+        [&](const Specialization::NoAlias &) { OS << ".noalias"; },
+        [&](const Specialization::ArgAlignment &AA) { OS << ".align" << AA.Alignment << '$' << AA.ArgNo; }
+      );
+      return VersionText;
+    }
+  };
+
+  std::optional<SmallVector<Argument, 8>> Args;
+  std::optional<SmallVector<Version, 8>> Versions;
 
   KernelInfo() = default;
 
-  KernelInfo(StringRef Str)
-    : Args([&Str]() -> decltype(Args) {
-      if (Str.empty())
-        return {};
-      decltype(Args) A;
-      for (const StringRef EncodedArgType : split(Str, ';'))
-        A.emplace_back(EncodedArgType);
-      return A;
-    }())
-  {
+  static constexpr StringLiteral SectionSeparator = " ";
+  static constexpr StringLiteral SectionNameSeparator = ":";
+  static constexpr StringLiteral ElementSeparator = ";";
+  static constexpr StringLiteral ArgSection = "args";
+  static constexpr StringLiteral VersionSection = "versions";
+
+  KernelInfo(StringRef Str) {
+    if (Str.empty())
+      return;
+
+    for (const StringRef Section : split(Str, SectionSeparator)) {
+      const auto [SectionName, SectionContent] = Section.split(SectionNameSeparator);
+      if (SectionName == ArgSection) {
+        auto &A = Args.emplace();
+        if (!SectionContent.empty())
+          for (const StringRef EncodedArgType : split(SectionContent, ElementSeparator))
+            A.emplace_back(EncodedArgType);
+        continue;
+      }
+      if (SectionName == VersionSection) {
+        auto &V = Versions.emplace();
+        if (!SectionContent.empty())
+          for (const StringRef EncodedVersion : split(SectionContent, ElementSeparator))
+            V.emplace_back(EncodedVersion);
+        continue;
+      }
+    }
   }
 
-  bool operator==(const KernelInfo &Other) const { return Args == Other.Args; }
-  bool operator!=(const KernelInfo &Other) const { return !(*this == Other); }
-
   SmallString<128> str() const {
-    if (Args.empty())
-      return {};
-    SmallString<128> KernelInfoText(Args[0].Ty.str());
-    for (size_t I = 1; I < Args.size(); ++I)
-      KernelInfoText.append({ ";", Args[I].Ty.str() });
+    SmallString<128> KernelInfoText;
+    raw_svector_ostream OS(KernelInfoText);
+
+    if (Args) {
+      OS << ArgSection << SectionNameSeparator;
+      interleave(*Args, OS, [&](const Argument &Arg) { OS << Arg.Ty.str(); }, ElementSeparator);
+    }
+
+    if (Versions) {
+      if (!KernelInfoText.empty())
+        OS << SectionSeparator;
+      OS << VersionSection << SectionNameSeparator;
+      interleave(*Versions, OS, [&](const Version &V) { OS << V.str(); }, ElementSeparator);
+    }
+
     return KernelInfoText;
   }
 };

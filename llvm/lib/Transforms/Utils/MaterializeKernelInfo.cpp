@@ -29,11 +29,46 @@
 
 using namespace llvm;
 
-namespace {
+namespace llvm::kernel_info_utils {
 
-std::string getKernelInfoSymbolName(const Function &F) {
-  return (F.getName() + "_kernel_info").str();
+// TODO: we want to change this. instead of removing first, remove later if what we want to create has changed
+
+std::optional<KernelInfo> parseAndEraseGlobal(Module &M, StringRef KISymbol) {
+  GlobalValue *GV = M.getNamedValue(KISymbol);
+  if (!GV)
+    return {};
+
+  const auto *GVar = dyn_cast<GlobalVariable>(GV);
+  assert(GVar);
+  assert(GVar->hasInitializer());
+
+  const Constant *Init = GVar->getInitializer();
+  assert(Init);
+
+  if (Init->isNullValue())
+    return KernelInfo{};
+
+  const auto *InitArray = dyn_cast<ConstantDataArray>(Init);
+  assert(InitArray);
+
+  assert(InitArray->isCString());
+  KernelInfo KI(InitArray->getAsCString());
+  removeFromUsedLists(M, [&](Constant *C) { return C->hasName() && C->getName() == KISymbol; });
+  GV->eraseFromParent();
+  return KI;
 }
+
+void createGlobal(Module &M, StringRef KISymbol, const KernelInfo &KI) {
+  IRBuilder<> Builder(M.getContext());
+  GlobalVariable &KernelInfoGV = *Builder.CreateGlobalString(KI.str(), KISymbol, M.getDataLayout().getDefaultGlobalsAddressSpace(), &M, true);
+  KernelInfoGV.setLinkage(GlobalValue::LinkageTypes::ExternalLinkage);
+  KernelInfoGV.setVisibility(GlobalValue::VisibilityTypes::ProtectedVisibility);
+  appendToCompilerUsed(M, { &KernelInfoGV });
+}
+
+} // end namespace llvm::kernel_info_utils
+
+namespace {
 
 KernelInfo::Argument::Type getKernelInfoArgType(const Type &Ty) {
   switch (Ty.getTypeID()) {
@@ -50,54 +85,30 @@ KernelInfo::Argument::Type getKernelInfoArgType(const Type &Ty) {
   }
 }
 
-KernelInfo getKernelInfo(const Function &F) {
-  KernelInfo KI;
+SmallVector<KernelInfo::Argument, 8> getKernelInfoArgs(const Function &F) {
+  SmallVector<KernelInfo::Argument, 8> Args;
   for (const Argument &Arg : F.args())
-    KI.Args.emplace_back(getKernelInfoArgType(*Arg.getType()));
-  return KI;
+    Args.emplace_back(getKernelInfoArgType(*Arg.getType()));
+  return Args;
 }
 
-std::optional<KernelInfo> getKernelInfo(const GlobalValue &GV) {
-  const auto *GVar = dyn_cast<GlobalVariable>(&GV);
-  if (!GVar || !GVar->hasInitializer())
-    return {};
-
-  if (GVar->getInitializer()->isNullValue()) {
-    const auto *ArrayTy = dyn_cast<ArrayType>(GVar->getValueType());
-    if (ArrayTy && ArrayTy->getElementType()->isIntegerTy(8) && ArrayTy->getNumElements() == 1)
-      return KernelInfo("");
-  }
-
-  const auto *Init = dyn_cast<ConstantDataArray>(GVar->getInitializer());
-  if (!Init || !Init->isCString())
-    return {};
-
-  return KernelInfo(Init->getAsCString());
-}
-
-bool materializeKernelInfo(Function &F, IRBuilder<> &Builder) {
+bool materializeKernelInfo(Function &F) {
   if (!F.hasKernelCallingConv())
     return false;
 
   Module &M = *F.getParent();
 
-  const std::string KernelInfoSymbol = getKernelInfoSymbolName(F);
-  const KernelInfo KI = getKernelInfo(F);
-  if (M.getNamedValue(KernelInfoSymbol)) {
-    const std::optional<KernelInfo> ExistingKI = getKernelInfo(*M.getNamedValue(KernelInfoSymbol));
-    if (!ExistingKI || KI != *ExistingKI)
-      report_fatal_error(
-        Twine("MaterializeKernelInfo: cannot materialize kernel info because the `") +
-        KernelInfoSymbol +
-        "` symbol already exists and contains malformed or incompatible information",
-        /*gen_crash_diag=*/true);
-    return false;
+  const std::string KISymbol = KernelInfo::getGlobalNameFor(F.getName());
+  if (auto MaybeKI = kernel_info_utils::parseAndEraseGlobal(M, KISymbol)) {
+    auto &KI = *MaybeKI;
+    assert(!KI.Args || *KI.Args == getKernelInfoArgs(F));
+    KI.Args.emplace(getKernelInfoArgs(F));
+    kernel_info_utils::createGlobal(M, KISymbol, KI);
+  } else {
+    KernelInfo KI{};
+    KI.Args.emplace(getKernelInfoArgs(F));
+    kernel_info_utils::createGlobal(M, KISymbol, KI);
   }
-
-  GlobalVariable &KernelInfoGV = *Builder.CreateGlobalString(KI.str(), KernelInfoSymbol, M.getDataLayout().getDefaultGlobalsAddressSpace(), &M, true);
-  KernelInfoGV.setLinkage(GlobalValue::LinkageTypes::ExternalLinkage);
-  KernelInfoGV.setVisibility(GlobalValue::VisibilityTypes::ProtectedVisibility);
-  appendToCompilerUsed(M, { &KernelInfoGV });
 
   return true;
 }
@@ -109,11 +120,10 @@ PreservedAnalyses MaterializeKernelInfoPass::run(Module &M,
   if (!M.getTargetTriple().isGPU())
     return PreservedAnalyses::all();
 
-  IRBuilder<> Builder(M.getContext());
-
   bool Changed = false;
   for (Function &F : M)
-    Changed |= materializeKernelInfo(F, Builder);
+    Changed |= materializeKernelInfo(F);
 
+  // TODO: be careful, we are erasing the globals unconditionally
   return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }

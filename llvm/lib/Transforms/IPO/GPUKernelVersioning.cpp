@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/IPO/GPUKernelVersioning.h"
+#include "llvm/Transforms/Utils/MaterializedKernelInfo.h"
+#include "llvm/Transforms/Utils/MaterializeKernelInfo.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -20,6 +22,19 @@ using namespace llvm;
 #define DEBUG_TYPE "gpu-kernel-versioning"
 
 namespace {
+
+cl::opt<bool> DisableNoLoopVersioning(
+    "gpu-kernel-versioning-disable-noloop",
+    cl::desc("Disable the generation of .noloop versions."),
+    cl::Hidden,
+    cl::init(false)
+);
+cl::opt<bool> DisableNoAliasVersioning(
+    "gpu-kernel-versioning-disable-noalias",
+    cl::desc("Disable the generation of .noalias versions."),
+    cl::Hidden,
+    cl::init(false)
+);
 
 template <typename Fn>
 CallInst *getFirstCallThatSatisfies(Function &F, const Fn &Predicate) {
@@ -47,6 +62,14 @@ CallInst *getFirstCallThatStartsWith(Function &F, StringRef Prefix) {
   });
 }
 
+CallInst *getFirstCallThatEndsWith(Function &F, StringRef Suffix) {
+  return getFirstCallThatSatisfies(F, [Suffix](const CallInst &CI) {
+    if (const Function *Callee = CI.getCalledFunction())
+      return Callee->getName().ends_with(Suffix);
+    return false;
+  });
+}
+
 CallInst *getFirstKmpcDistributeStaticInitCall(Function &F) {
   return getFirstCallThatStartsWith(F, "__kmpc_distribute_static_init_");
 }
@@ -56,20 +79,43 @@ CallInst *getFirstKmpcForStaticInitCall(Function &F) {
 CallInst *getFirstKmpcParallel60Call(Function &F) {
   return getFirstCallNamed(F, "__kmpc_parallel_60");
 }
+CallInst *getFirstOutlineCall(Function &F) {
+  return getFirstCallThatEndsWith(F, "_omp_outlined");
+}
 
 Function *getMicrotask(const CallInst &KmpcParallel60Call) {
   return cast<Function>(KmpcParallel60Call.getArgOperand(5)->stripPointerCasts());
 }
 
 bool isDistributeParallelFor(Function &F) {
-  const CallInst *Outer = getFirstKmpcDistributeStaticInitCall(F);
-  if (!Outer) return false;
-  const CallInst *Parallel = getFirstKmpcParallel60Call(F);
-  if (!Parallel) return false;
+  const CallInst *Outline = getFirstOutlineCall(F);
+  if (!Outline) {
+    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: kernel `" << F.getName() << "` does not call `" << F.getName() << "_omp_outlined`\n");
+    return false;
+  }
+  Function *OutlineFn = Outline->getCalledFunction();
+  assert(OutlineFn);
+  const CallInst *Outer = getFirstKmpcDistributeStaticInitCall(*OutlineFn);
+  if (!Outer) {
+    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: helper `" << OutlineFn->getName() << "` does not call `__kmpc_distribute_static_init_*`\n");
+    return false;
+  }
+  const CallInst *Parallel = getFirstKmpcParallel60Call(*OutlineFn);
+  if (!Parallel) {
+    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: kernel `" << OutlineFn->getName() << "` does not call `__kmpc_parallel_60`\n");
+    return false;
+  }
   Function *Microtask = getMicrotask(*Parallel);
-  if (!Microtask) return false;
+  if (!Microtask) {
+    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: kernel `" << OutlineFn->getName() << "` calls `__kmpc_parallel_60` but has malformed microtask\n");
+    return false;
+  }
   const CallInst *Inner = getFirstKmpcForStaticInitCall(*Microtask);
-  return Inner;
+  if (!Inner) {
+    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: microtask `" << Microtask->getName() << "` does not call `__kmpc_for_static_init_*`\n");
+    return false;
+  }
+  return true;
 }
 
 Type &getKmpcStaticInitIntTy(const Function &F) {
@@ -153,29 +199,21 @@ void adjustInnerStaticDistribution(CallInst &I) {
 
 Function &specializeMicrotaskNoLoop(Function &Microtask) {
   ValueToValueMapTy VMap;
-  Function &ClonedMicrotask = *CloneFunction(&Microtask, VMap);
+  Function &SpecializedMicrotask = *CloneFunction(&Microtask, VMap);
 
-  CallInst *ForStaticInit = getFirstKmpcForStaticInitCall(ClonedMicrotask);
+  CallInst *ForStaticInit = getFirstKmpcForStaticInitCall(SpecializedMicrotask);
   assert(ForStaticInit && "expected the microtask to contain a __kmpc_for_static_init_* call");
 
   adjustInnerStaticDistribution(*ForStaticInit);
-  return ClonedMicrotask;
+  return SpecializedMicrotask;
 }
 
-SmallString<64> getNoLoopSymbolName(const Function &F) {
-  return { F.getName(), ".noloop" };
-}
-
-Function &specializeKernelNoLoop(Function &Kernel) {
-  ValueToValueMapTy VMap;
-  Function &ClonedKernel = *CloneFunction(&Kernel, VMap);
-  ClonedKernel.setName(getNoLoopSymbolName(Kernel));
-
-  CallInst *DistributeStaticInit = getFirstKmpcDistributeStaticInitCall(ClonedKernel);
+void specializeOutlineNoLoop(Function &Outline) {
+  CallInst *DistributeStaticInit = getFirstKmpcDistributeStaticInitCall(Outline);
   assert(DistributeStaticInit && "expected the kernel to contain a __kmpc_distribute_static_init_* call");
   Value &TripCount = adjustOuterStaticDistribution(*DistributeStaticInit);
 
-  CallInst *Parallel = getFirstKmpcParallel60Call(ClonedKernel);
+  CallInst *Parallel = getFirstKmpcParallel60Call(Outline);
   assert(Parallel && "expected the kernel to contain a __kmpc_parallel_60 call");
 
   IRBuilder<> Builder(Parallel);
@@ -186,13 +224,72 @@ Function &specializeKernelNoLoop(Function &Kernel) {
   Function *Microtask = getMicrotask(*Parallel);
   assert(Microtask && "expected the __kmpc_parallel_60 to contain a microtask");
   Parallel->setArgOperand(5, &specializeMicrotaskNoLoop(*Microtask));
-  
-  return ClonedKernel;
+}
+
+SmallString<64> getNoLoopSymbolName(const Function &F) {
+  // TODO: get the .noloop from MaterializedKernelInfo
+  return { F.getName(), ".noloop" };
+}
+SmallString<64> getNoAliasSymbolName(const Function &F) {
+  // TODO: get the .noalias from MaterializedKernelInfo
+  return { F.getName(), ".noalias" };
+}
+
+void cloneKernelEnvironmentForVersion(Function &Original, Function &Version) {
+  Module &M = *Original.getParent();
+  assert(&M == Version.getParent());
+
+  const SmallString<128> OriginalKernelEnvSymbol{ Original.getName(), "_kernel_environment" };
+  GlobalVariable *OriginalKernelEnvGV = M.getNamedGlobal(OriginalKernelEnvSymbol);
+  assert(OriginalKernelEnvGV);
+
+  const SmallString<128> VersionKernelEnvSymbol{ Version.getName(), "_kernel_environment" };
+  assert(!M.getNamedGlobal(VersionKernelEnvSymbol));
+  GlobalVariable *VersionKernelEnvGV = new GlobalVariable(
+    M,
+    OriginalKernelEnvGV->getValueType(),
+    OriginalKernelEnvGV->isConstant(),
+    OriginalKernelEnvGV->getLinkage(),
+    OriginalKernelEnvGV->hasInitializer() ? OriginalKernelEnvGV->getInitializer() : nullptr,
+    VersionKernelEnvSymbol,
+    nullptr,
+    OriginalKernelEnvGV->getThreadLocalMode(),
+    OriginalKernelEnvGV->getType()->getAddressSpace(),
+    OriginalKernelEnvGV->isExternallyInitialized()
+  );
+  assert(VersionKernelEnvGV);
+  VersionKernelEnvGV->copyAttributesFrom(OriginalKernelEnvGV);
+}
+
+Function *prepareFirstOutlineForSpecialization(Function &F) {
+  const Twine SpecializedOutlineName{ F.getName(), "_omp_outlined" };
+  assert(!F.getParent()->getNamedValue(SpecializedOutlineName.str()));
+  CallInst *Outline = getFirstOutlineCall(F);
+  if (!Outline)
+    return nullptr;
+  Function *OutlineFn = Outline->getCalledFunction();
+  assert(OutlineFn);
+  ValueToValueMapTy VMap;
+  Function &ClonedOutlineFn = *CloneFunction(OutlineFn, VMap);
+  ClonedOutlineFn.setName(SpecializedOutlineName);
+  Outline->setCalledFunction(&ClonedOutlineFn);
+  return &ClonedOutlineFn;
+}
+
+Function &specializeNoLoop(Function &Kernel) {
+  ValueToValueMapTy VMap;
+  Function &SpecializedKernel = *CloneFunction(&Kernel, VMap);
+  SpecializedKernel.setName(getNoLoopSymbolName(Kernel));
+
+  Function *SpecializedOutline = prepareFirstOutlineForSpecialization(SpecializedKernel);
+  assert(SpecializedOutline);
+  specializeOutlineNoLoop(*SpecializedOutline);
+
+  return SpecializedKernel;
 }
 
 Function *trySpecializeNoLoop(Function &F) {
-  if (!F.hasKernelCallingConv())
-    return nullptr;
+  assert(F.hasKernelCallingConv());
 
   const Module &M = *F.getParent();
 
@@ -209,22 +306,110 @@ Function *trySpecializeNoLoop(Function &F) {
     return nullptr;
   }
 
-  return &specializeKernelNoLoop(F);
+  return &specializeNoLoop(F);
+}
+
+void addNoAliasToPtrArgs(Function &F) {
+  for (auto &Arg : F.args())
+    if (Arg.getType()->isPointerTy())
+        Arg.addAttr(Attribute::NoAlias);
+}
+
+Function &cloneAndAddNoAliasToPtrArgs(Function &F) {
+  ValueToValueMapTy VMap;
+  Function &Clone = *CloneFunction(&F, VMap);
+  addNoAliasToPtrArgs(Clone);
+  return Clone;
+}
+
+Function &specializeNoAlias(Function &Kernel) {
+  Function &SpecializedKernel = cloneAndAddNoAliasToPtrArgs(Kernel);
+  SpecializedKernel.setName(getNoAliasSymbolName(Kernel));
+
+  Function *SpecializedOutline = prepareFirstOutlineForSpecialization(SpecializedKernel);
+  if (!SpecializedOutline)
+    return SpecializedKernel;
+  addNoAliasToPtrArgs(*SpecializedOutline);
+  
+  if (CallInst *Parallel = getFirstKmpcParallel60Call(*SpecializedOutline)) {
+    Function *Microtask = getMicrotask(*Parallel);
+    assert(Microtask && "expected the __kmpc_parallel_60 to contain a microtask");
+    Function &SpecializedMicrotask = cloneAndAddNoAliasToPtrArgs(*Microtask);
+    // const Twine SpecializedMicrotaskName{ SpecializedOutline.getName(), "_omp_outlined" };
+    // assert(!SpecializedMicrotask.getParent()->getNamedValue(SpecializedMicrotaskName));
+    // SpecializedMicrotask.setName(SpecializedMicrotaskName);
+    Parallel->setArgOperand(5, &SpecializedMicrotask);
+  }
+
+  return SpecializedKernel;
+}
+
+Function *trySpecializeNoAlias(Function &F) {
+  assert(F.hasKernelCallingConv());
+
+  const Module &M = *F.getParent();
+
+  const StringRef NoAliasSymbol = getNoAliasSymbolName(F);
+  if (M.getNamedValue(NoAliasSymbol)) {
+    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped noalias specialization for kernel `"
+                      << F.getName() << "` because `" << NoAliasSymbol << "` already exists\n");
+    return nullptr;
+  }
+
+  if (!std::any_of(F.args().begin(), F.args().end(), [](const Argument &Arg) { return Arg.getType()->isPointerTy() && !Arg.hasNoAliasAttr(); })) {
+    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped noalias specialization for kernel `"
+                      << F.getName() << "` there are no ptr args, or all of them are noalias already\n");
+    return nullptr;
+  }
+
+  return &specializeNoAlias(F);
+}
+
+KernelInfo createKernelInfoWith0Versions() {
+  KernelInfo KI;
+  KI.Versions.emplace();
+  return KI;
 }
 
 } // namespace
-
 
 PreservedAnalyses GPUKernelVersioningPass::run(Module &M,
                                                ModuleAnalysisManager &) {
   if (!M.getTargetTriple().isGPU())
     return PreservedAnalyses::all();
 
-  bool Changed = false;
-  SmallVector<std::reference_wrapper<Function>, 16> Worklist(M.begin(), M.end());
+  SmallVector<std::pair<KernelInfo, std::reference_wrapper<Function>>, 16> Worklist;
+  for (Function &F : M) {
+    if (!F.hasKernelCallingConv())
+      continue;
+    auto &[KI, Kernel] = Worklist.emplace_back(kernel_info_utils::parseAndEraseGlobal(M, KernelInfo::getGlobalNameFor(F.getName())).value_or(createKernelInfoWith0Versions()), F);
+    if (!KI.Versions)
+      KI.Versions.emplace();
+  }
 
-  for (Function &F : Worklist)
-    Changed |= trySpecializeNoLoop(F) != nullptr;
+  if (!DisableNoLoopVersioning)
+    for (size_t Size = Worklist.size(), I = 0; I < Size; ++I) {
+      auto &[KI, Kernel] = Worklist[I];
+      if (Function *Version = trySpecializeNoLoop(Kernel)) {
+        cloneKernelEnvironmentForVersion(Kernel, *Version);
+        KI.Versions->push_back({ { KernelInfo::Version::Specialization::NoLoop{} } });
+        Worklist.emplace_back(createKernelInfoWith0Versions(), *Version);
+      }
+    }
 
-  return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+  if (!DisableNoAliasVersioning)
+    for (size_t Size = Worklist.size(), I = 0; I < Size; ++I) {
+      auto &[KI, Kernel] = Worklist[I];
+      if (Function *Version = trySpecializeNoAlias(Kernel)) {
+        cloneKernelEnvironmentForVersion(Kernel, *Version);
+        KI.Versions->push_back({ { KernelInfo::Version::Specialization::NoAlias{} } });
+        Worklist.emplace_back(createKernelInfoWith0Versions(), *Version);
+      }
+    }
+
+  for (const auto &[KI, Version] : Worklist)
+    kernel_info_utils::createGlobal(M, KernelInfo::getGlobalNameFor(Version.get().getName()), KI);
+
+  // TODO: maybe we can relax it
+  return PreservedAnalyses::none();
 }

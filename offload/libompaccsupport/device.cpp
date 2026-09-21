@@ -392,13 +392,15 @@ int32_t DeviceTy::launchKernel(void *TgtEntryPtr, void **TgtVarsPtr,
                                ptrdiff_t *TgtOffsets, KernelArgsTy &KernelArgs,
                                KernelReplayOutcomeTy *ReplayOutcome,
                                AsyncInfoTy &AsyncInfo) {
-  llvm::SmallVector<void *> Args, Ptrs;
+  llvm::SmallVector<void *> Args, Ptrs, ObjBasePtrs;
   llvm::SmallVector<int64_t> ArgSizes;
 
   KernelLaunchArgsTy LaunchArgs;
   LaunchArgs.OmpABIVersion = KernelArgs.Version;
   LaunchArgs.ReplayOutcome = ReplayOutcome;
   LaunchArgs.ArgSizes = KernelArgs.ArgSizes;
+  assert(TgtVarsPtr);
+  LaunchArgs.ObjBasePtrs = TgtVarsPtr;
   LaunchArgs.Tripcount = KernelArgs.Tripcount;
   LaunchArgs.DynCGroupMem = KernelArgs.DynCGroupMem;
   llvm::copy(KernelArgs.UserNumBlocks, LaunchArgs.UserNumBlocks);
@@ -428,6 +430,10 @@ int32_t DeviceTy::launchKernel(void *TgtEntryPtr, void **TgtVarsPtr,
       if (KernelArgs.Version == OMP_KERNEL_ARG_MIN_VERSION_WITH_DYN_PTR) {
         std::rotate(Args.begin(), Args.end() - 1, Args.end());
         LaunchArgs.DynPtrSlot = &Args[0];
+
+        ObjBasePtrs.assign(LaunchArgs.ObjBasePtrs, LaunchArgs.ObjBasePtrs + KernelArgs.NumArgs);
+        std::rotate(ObjBasePtrs.begin(), ObjBasePtrs.end() - 1, ObjBasePtrs.end());
+        LaunchArgs.ObjBasePtrs = ObjBasePtrs.data();
 
         // Keep ArgSizes in sync with the rotated Args, if present.
         if (LaunchArgs.ArgSizes) {

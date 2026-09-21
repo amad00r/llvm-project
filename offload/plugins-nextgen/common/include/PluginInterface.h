@@ -444,6 +444,8 @@ struct KernelLaunchArgsTy {
   /// Size of the argument data in bytes, one entry per \p Args element,
   /// possibly null.
   int64_t *ArgSizes = nullptr;
+  // TODO: 
+  void **ObjBasePtrs = nullptr;
   /// Address of the element of \p Args reserved for the kernel launch
   /// environment (dyn_ptr), or null if this launch has no such slot. The
   /// caller owns the storage it points into; the plugin fills it in once it
@@ -634,11 +636,16 @@ private:
   /// The kernel information found in the device image.
   std::optional<KernelInfo> Info;
 
-  /// The no-loop version of the kernel
-  GenericKernelTy *NoLoopVersion = nullptr;
+  /// The different specialized versions of the kernel.
+  SmallVector<std::pair<KernelInfo::Version, std::reference_wrapper<GenericKernelTy>>, 8> Versions;
 
   /// The image that contains this kernel.
   DeviceImageTy *ImagePtr = nullptr;
+
+  // TODO: this should only be initialized once insead of per-kernel
+  static constexpr char ProfilingEnvar[] = "GPU_KERNEL_VERSIONING_PROFILE";
+  // TODO: we use unique_ptr instead of optional to avoid modifying the const qualifiers of the launch function. lets discuss later what to do
+  std::unique_ptr<llvm::raw_fd_ostream> ProfilingFile;
 
 protected:
   /// The preferred number of threads to run the kernel.

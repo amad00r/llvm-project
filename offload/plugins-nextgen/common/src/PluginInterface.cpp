@@ -75,84 +75,91 @@ void AsyncInfoWrapperTy::finalize(Error &Err) {
 
 Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
                             DeviceImageTy &Image) {
+  // TODO: it is overkill to open a stream for each kernel. also, it does not take into account multithreading i believe
+  if (const char *ProfilingFilename = getenv(ProfilingEnvar)) {
+    std::error_code EC;
+    ProfilingFile = std::make_unique<raw_fd_ostream>(ProfilingFilename, EC, sys::fs::OF_Append | sys::fs::OF_Text);
+    if (EC)
+      reportFatalUsageError(SmallString<128>{
+        "Unable to open file specified in `", ProfilingEnvar, "`: ", EC.message()
+      }.c_str());
+  }
+
+  ImagePtr = &Image;
+
   GenericGlobalHandlerTy &GHandler = GenericDevice.Plugin.getGlobalHandler();
 
   // Retrieve kernel environment object for the kernel.
-  std::string EnvironmentName = std::string(Name) + "_kernel_environment";
-  KernelEnvironmentTy KEnv;
+  const std::string EnvironmentName = Name + "_kernel_environment";
   if (GHandler.isSymbolInImage(GenericDevice, Image, EnvironmentName)) {
-    GlobalTy KernelEnv(EnvironmentName, sizeof(KEnv), &KEnv);
+    GlobalTy KernelEnv(EnvironmentName, sizeof(KernelEnvironment), &KernelEnvironment);
     if (auto Err =
             GHandler.readGlobalFromImage(GenericDevice, Image, KernelEnv))
       return Err;
   } else {
-    KEnv = KernelEnvironmentTy{};
-    ODBG(OLDT_Kernel) << "Failed to read kernel environment for '" << getName()
+    KernelEnvironment = KernelEnvironmentTy{};
+    ODBG(OLDT_Kernel) << "Failed to read kernel environment for '" << Name
                       << "' Using default Bare (0) execution mode";
   }
 
-  static auto CommonInit = [](GenericKernelTy &Kernel, GenericDeviceTy &GenericDevice, DeviceImageTy &Image, const KernelEnvironmentTy &KernelEnvironment) {  
-    GenericGlobalHandlerTy &GHandler = GenericDevice.Plugin.getGlobalHandler();
+  // Max = Config.Max > 0 ? min(Config.Max, Device.Max) : Device.Max;
+  MaxNumThreads = KernelEnvironment.Configuration.MaxThreads > 0
+                      ? std::min(KernelEnvironment.Configuration.MaxThreads,
+                                int32_t(GenericDevice.getThreadLimit()))
+                      : GenericDevice.getThreadLimit();
 
-    Kernel.ImagePtr = &Image;
+  // Pref = Config.Pref > 0 ? max(Config.Pref, Device.Pref) : Device.Pref;
+  PreferredNumThreads =
+      KernelEnvironment.Configuration.MinThreads > 0
+          ? std::max(KernelEnvironment.Configuration.MinThreads,
+                    int32_t(GenericDevice.getDefaultNumThreads()))
+          : GenericDevice.getDefaultNumThreads();
 
-    // Retrieve kernel information if possible.
-    assert(!Kernel.Info);
-    const std::string KernelInfoName = Kernel.Name + "_kernel_info";
-    if (GHandler.isSymbolInImage(GenericDevice, Image, KernelInfoName)) {
-      GlobalTy ImageKernelInfo(KernelInfoName);
-      if (auto Err = GHandler.getGlobalMetadataFromImage(GenericDevice, Image,
-                                                        ImageKernelInfo))
-        return Err;
+  // Retrieve kernel information if possible.
+  assert(!Info);
+  const std::string KernelInfoName = KernelInfo::getGlobalNameFor(Name);
+  if (GHandler.isSymbolInImage(GenericDevice, Image, KernelInfoName)) {
+    GlobalTy ImageKernelInfo(KernelInfoName);
+    if (auto Err = GHandler.getGlobalMetadataFromImage(GenericDevice, Image,
+                                                      ImageKernelInfo))
+      return Err;
 
-      const StringRef EncodedKernelInfo(static_cast<char *>(ImageKernelInfo.getPtr()), ImageKernelInfo.getSize() - /* null terminator */1);
-      Kernel.Info.emplace(EncodedKernelInfo);
+    const StringRef EncodedKernelInfo(static_cast<char *>(ImageKernelInfo.getPtr()), ImageKernelInfo.getSize() - /* null terminator */1);
+    const auto &KInfo = Info.emplace(EncodedKernelInfo);
 
-      ODBG(OLDT_Kernel) << "Found kernel info for `" << Kernel.Name << "`:";
-      ODBG(OLDT_Kernel) << "  " << KernelInfoName << " = \"" << EncodedKernelInfo << "\"";
+    ODBG(OLDT_Kernel) << "Found kernel info for `" << Name << "`:";
+    ODBG(OLDT_Kernel) << "  " << KernelInfoName << " = \"" << EncodedKernelInfo << "\"";
+
+    if (KInfo.Args) {
+      ODBG(OLDT_Kernel) << "  Found argument info:";
       size_t I = 0;
-      for (const auto &Arg : Kernel.Info->Args)
-        ODBG(OLDT_Kernel) << "  typeof arg[" << I++ << "] = " << Arg.Ty.str();
+      for (const auto &Arg : *KInfo.Args)
+        ODBG(OLDT_Kernel) << "    typeof arg[" << I++ << "] = " << Arg.Ty.str();
     } else {
-      ODBG(OLDT_Kernel) << "Failed to read kernel info for `" << Kernel.Name << "`";
+      ODBG(OLDT_Kernel) << "  Missing argument info.";
     }
 
-    // Max = Config.Max > 0 ? min(Config.Max, Device.Max) : Device.Max;
-    Kernel.MaxNumThreads = KernelEnvironment.Configuration.MaxThreads > 0
-                        ? std::min(KernelEnvironment.Configuration.MaxThreads,
-                                  int32_t(GenericDevice.getThreadLimit()))
-                        : GenericDevice.getThreadLimit();
-
-    // Pref = Config.Pref > 0 ? max(Config.Pref, Device.Pref) : Device.Pref;
-    Kernel.PreferredNumThreads =
-        KernelEnvironment.Configuration.MinThreads > 0
-            ? std::max(KernelEnvironment.Configuration.MinThreads,
-                      int32_t(GenericDevice.getDefaultNumThreads()))
-            : GenericDevice.getDefaultNumThreads();
-
-    Kernel.KernelEnvironment = KernelEnvironment;
-
-    return Kernel.initImpl(GenericDevice, Image);
-  };
-
-  // Retrieve the no-loop version of the kernel if available.
-  std::string NoLoopVersionName = std::string(Name) + ".noloop";
-  if (GHandler.isSymbolInImage(GenericDevice, Image, NoLoopVersionName)) {
-    if (auto MaybeNoLoopVersion = GenericDevice.constructKernel(NoLoopVersionName)) {
-      if (!CommonInit(*MaybeNoLoopVersion, GenericDevice, Image, KEnv)) {
-        NoLoopVersion = &*MaybeNoLoopVersion;
-        assert(NoLoopVersion->isSPMDMode());
-      } else
-        ODBG(OLDT_Kernel) << "Failed to initialize noloop version of kernel `" << Name << "`";
+    if (KInfo.Versions) {
+      ODBG(OLDT_Kernel) << "  Found version info:";
+      for (const auto &Version : *KInfo.Versions) {
+        ODBG(OLDT_Kernel) << "    " << Version.str();
+        SmallString<128> VersionSymbol{ Name, Version.str() };
+        assert(GHandler.isSymbolInImage(GenericDevice, Image, VersionSymbol));
+        auto MaybeKernelVersion = GenericDevice.constructKernel(VersionSymbol);
+        assert(MaybeKernelVersion);
+        auto &KernelVersion = *MaybeKernelVersion;
+        Error Err = KernelVersion.init(GenericDevice, Image);
+        assert(!Err);
+        Versions.emplace_back(Version, KernelVersion);
+      }
     } else {
-      ODBG(OLDT_Kernel) << "Failed to construct noloop version of kernel `" << Name << "`";
+      ODBG(OLDT_Kernel) << "  Missing version info.";
     }
-    ODBG(OLDT_Kernel) << "found noloop version of kernel `" << Name << "`";
   } else {
-    ODBG(OLDT_Kernel) << "noloop version of kernel `" << Name << "` does not exist";
+    ODBG(OLDT_Kernel) << "There is no kernel info available for `" << Name << "`";
   }
 
-  return CommonInit(*this, GenericDevice, Image, KEnv);
+  return initImpl(GenericDevice, Image);
 }
 
 Expected<KernelLaunchEnvironmentTy *>
@@ -229,26 +236,38 @@ GenericKernelTy::getKernelLaunchEnvironment(
 
 namespace {
 
-llvm::SmallString<32> formatValueBasedOnKernelArgInfo(const KernelInfo::Argument::Type &Ty, void *Val) {
-  using namespace std::string_view_literals;
-  return Ty.visit(
-    [](KernelInfo::Argument::Type::Unknown) -> llvm::SmallString<32> { return StringRef("<unrepresentable>"sv); },
-    [Val](KernelInfo::Argument::Type::Int I) -> llvm::SmallString<32> {
-      switch (I.BitWidth) {
-      case 8: return llvm::formatv("{}", *reinterpret_cast<uint8_t *>(Val));
-      case 16: return llvm::formatv("{}", *reinterpret_cast<uint16_t *>(Val));
-      case 32: return llvm::formatv("{}", *reinterpret_cast<uint32_t *>(Val));
-      case 64: return llvm::formatv("{}", *reinterpret_cast<uint64_t *>(Val));
-      default: return StringRef("<unsupported bit width>"sv);
-      }
-    },
-    [Val](KernelInfo::Argument::Type::Float) -> llvm::SmallString<32> { return llvm::formatv("{}", *reinterpret_cast<float *>(Val)); },
-    [Val](KernelInfo::Argument::Type::Double) -> llvm::SmallString<32> { return llvm::formatv("{}", *reinterpret_cast<double *>(Val)); },
-    [Val](KernelInfo::Argument::Type::Ptr) -> llvm::SmallString<32> { return llvm::formatv("{}", *reinterpret_cast<void **>(Val)); }
-  );
-}
+struct KernelArgTypeAndValue {
+  const KernelInfo::Argument::Type &Ty;
+  void *ValuePtr;
+};
 
 } // namespace
+
+namespace llvm {
+
+// TODO: test that it works
+template <>
+struct format_provider<KernelArgTypeAndValue> {
+  static void format(const KernelArgTypeAndValue &Arg, raw_ostream &OS, StringRef) {
+    return Arg.Ty.visit(
+      [&](KernelInfo::Argument::Type::Unknown) { OS << "<unrepresentable>"; },
+      [&](KernelInfo::Argument::Type::Int I) {
+        switch (I.BitWidth) {
+        case 8: OS << *reinterpret_cast<uint8_t *>(Arg.ValuePtr); return;
+        case 16: OS << *reinterpret_cast<uint16_t *>(Arg.ValuePtr); return;
+        case 32: OS << *reinterpret_cast<uint32_t *>(Arg.ValuePtr); return;
+        case 64: OS << *reinterpret_cast<uint64_t *>(Arg.ValuePtr); return;
+        default: OS << "<unsupported bit width>"; return;
+        }
+      },
+      [&](KernelInfo::Argument::Type::Float) { OS << *reinterpret_cast<float *>(Arg.ValuePtr); },
+      [&](KernelInfo::Argument::Type::Double) { OS << *reinterpret_cast<double *>(Arg.ValuePtr); },
+      [&](KernelInfo::Argument::Type::Ptr) { OS << *reinterpret_cast<void **>(Arg.ValuePtr); }
+    );
+  }
+};
+
+} // end namespace llvm
 
 Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
                                        const KernelLaunchArgsTy &LaunchArgs,
@@ -260,20 +279,34 @@ Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
        getName(), NumBlocks[0], NumBlocks[1], NumBlocks[2], NumThreads[0],
        NumThreads[1], NumThreads[2], getExecutionModeName());
 
-  assert(!Info || Info->Args.size() == LaunchArgs.NumArgs);
+  assert(!Info || !Info->Args || Info->Args->size() == LaunchArgs.NumArgs);
   assert(LaunchArgs.NumArgs == 0 || LaunchArgs.Args);
   for (uint32_t I = 0; I < LaunchArgs.NumArgs; ++I) {
-    KernelInfo::Argument::Type Ty;
-    if (Info && I < Info->Args.size())
-      Ty = Info->Args[I].Ty;
+    INFO(
+      OMP_INFOTYPE_PLUGIN_KERNEL, GenericDevice.getDeviceId(), "%s",
+      [&, this]() -> SmallString<128> {
+        KernelInfo::Argument::Type Ty;
+        if (Info && Info->Args && I < Info->Args->size())
+          Ty = Info->Args.value()[I].Ty;
 
-    const SmallString<16> TyStr = Ty.str();
-    const SmallString<32> ValueStr = formatValueBasedOnKernelArgInfo(Ty, LaunchArgs.Args[I]);
+        if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>(Ty.Variant)) return formatv(
+          "  arg[{}]={{ type={}, size={}, base_ptr={}, val={} }}\n",
+          I,
+          Ty.str(),
+          LaunchArgs.ArgSizes ? LaunchArgs.ArgSizes[I] : -1,
+          LaunchArgs.ObjBasePtrs[I],
+          KernelArgTypeAndValue{ Ty, LaunchArgs.Args[I] }
+        );
 
-    INFO(OMP_INFOTYPE_PLUGIN_KERNEL, GenericDevice.getDeviceId(),
-         "  arg[%u]={ type=%.*s, val=%.*s }\n", I,
-         static_cast<int>(TyStr.size()), TyStr.data(),
-         static_cast<int>(ValueStr.size()), ValueStr.data());
+        return formatv(
+          "  arg[{}]={{ type={}, size={}, val={} }}\n",
+          I,
+          Ty.str(),
+          LaunchArgs.ArgSizes ? LaunchArgs.ArgSizes[I] : -1,
+          KernelArgTypeAndValue{ Ty, LaunchArgs.Args[I] }
+        );
+      }().c_str()
+    );
   }
 
   return printLaunchInfoDetails(GenericDevice, LaunchArgs, NumThreads,
@@ -370,16 +403,63 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
         EffectiveNumThreads[0], LaunchArgs.Flags.StrictThreads,
         LaunchArgs.UserThreadLimit[0] > 0);
 
-  const GenericKernelTy &SelectedKernel = [&, this]() -> const GenericKernelTy & {
-    if (!NoLoopVersion) return *this;
-    assert(isSPMDMode());
-    assert(NoLoopVersion->isSPMDMode());
-    if (EffectiveNumThreads[0]*EffectiveNumBlocks[0] >= LaunchArgs.Tripcount)
-      return *NoLoopVersion;
-    return *this;
+  const GenericKernelTy &KernelVersion = [&, this]() -> const GenericKernelTy & {
+    std::reference_wrapper<const GenericKernelTy> SelectedVersion = *this;
+
+    for (;;) {
+      const GenericKernelTy *NextVersion = nullptr;
+
+      for (const auto &[Details, Version] : SelectedVersion.get().Versions) {
+        const bool IsMatch = std::all_of(
+          Details.Specializations.begin(),
+          Details.Specializations.end(),
+          [&](const auto &Specialization) {
+            return Specialization.visit(
+              [&](KernelInfo::Version::Specialization::NoLoop) {
+                return EffectiveNumThreads[0]*EffectiveNumBlocks[0] >= LaunchArgs.Tripcount;
+              },
+              [&, this](KernelInfo::Version::Specialization::NoAlias) {
+                assert(Info);
+                assert(Info->Versions);
+                if (!Info->Args)
+                  return false;
+
+                const auto It0 = std::find_if(Info->Args->begin(), Info->Args->end(), [](const KernelInfo::Argument &Arg) { return std::holds_alternative<KernelInfo::Argument::Type::Ptr>(Arg.Ty.Variant); });
+                assert(It0 != Info->Args->end());
+
+                for (auto It = std::next(It0); It != Info->Args->end(); ++It)
+                  if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>(It->Ty.Variant))
+                    if (LaunchArgs.ObjBasePtrs[std::distance(Info->Args->begin(), It0)] == LaunchArgs.ObjBasePtrs[std::distance(Info->Args->begin(), It)])
+                      return false;
+
+                return true;
+              },
+              [](const KernelInfo::Version::Specialization::ArgAlignment &AA) {
+                // TODO: implement
+                return false;
+              }
+            );
+          }
+        );
+        if (IsMatch) {
+          NextVersion = &Version.get();
+          // Pick the first valid version at this tree depth
+          // TODO: this can be improved
+          break;
+        }
+      }
+
+      if (!NextVersion)
+        // No valid version found; stop hierarchy traversal
+        break;
+
+      SelectedVersion = *NextVersion;
+    }
+
+    return SelectedVersion;
   }();
 
-  auto DynBlockMemConfOrErr = SelectedKernel.prepareBlockMemory(
+  auto DynBlockMemConfOrErr = KernelVersion.prepareBlockMemory(
       GenericDevice, LaunchArgs,
       EffectiveNumBlocks[0] * EffectiveNumBlocks[1] * EffectiveNumBlocks[2]);
   if (!DynBlockMemConfOrErr)
@@ -390,7 +470,7 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
     AsyncInfoWrapper.freeAllocationAfterSynchronization(
         DynBlockMemConf.FallbackPtr, TargetAllocTy::TARGET_ALLOC_DEVICE);
 
-  auto KernelLaunchEnvOrErr = SelectedKernel.getKernelLaunchEnvironment(
+  auto KernelLaunchEnvOrErr = KernelVersion.getKernelLaunchEnvironment(
         GenericDevice, LaunchArgs, DynBlockMemConf,
         AsyncInfoWrapper, EffectiveNumBlocks[0]);
   if (!KernelLaunchEnvOrErr)
@@ -402,7 +482,7 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
   if (LaunchArgs.DynPtrSlot && *KernelLaunchEnvOrErr)
     *LaunchArgs.DynPtrSlot = *KernelLaunchEnvOrErr;
 
-  if (auto Err = SelectedKernel.printLaunchInfo(GenericDevice, LaunchArgs, EffectiveNumThreads,
+  if (auto Err = KernelVersion.printLaunchInfo(GenericDevice, LaunchArgs, EffectiveNumThreads,
                                  EffectiveNumBlocks))
     return Err;
 
@@ -415,7 +495,7 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
 
     // Record the kernel prologue data before kernel launch.
     auto RRHandleOrErr = RecordReplay->recordPrologue(
-        SelectedKernel, LaunchArgs, EffectiveNumBlocks, EffectiveNumThreads,
+        KernelVersion, LaunchArgs, EffectiveNumBlocks, EffectiveNumThreads,
         DynBlockMemConf.NativeSize);
     if (!RRHandleOrErr)
       return RRHandleOrErr.takeError();
@@ -423,58 +503,45 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
   }
 
   // Profiling csv header is kernel,grid_size_x,grid_size_y,grid_size_z,block_size_x,block_size_y,block_size_z,tripcount,parameters,start_timestamp_ns,end_timestamp_ns
-  // TODO: it is overkill to open a stream for each launch, but works
-  static constexpr char ProfilingEnvar[] = "GPU_KERNEL_VERSIONING_PROFILE";
-  if (const auto MaybeProfilingFile = sys::Process::GetEnv(ProfilingEnvar)) {
-    SmallString<256> Entry;
-    raw_svector_ostream OS(Entry);
+  if (ProfilingFile) {
+    *ProfilingFile << KernelVersion.Name << ','
+                   << EffectiveNumBlocks[0] << ','
+                   << EffectiveNumBlocks[1] << ','
+                   << EffectiveNumBlocks[2] << ','
+                   << EffectiveNumThreads[0] << ','
+                   << EffectiveNumThreads[1] << ','
+                   << EffectiveNumThreads[2] << ','
+                   << LaunchArgs.Tripcount << ',';
 
-    OS << SelectedKernel.Name << ','
-       << EffectiveNumBlocks[0] << ','
-       << EffectiveNumBlocks[1] << ','
-       << EffectiveNumBlocks[2] << ','
-       << EffectiveNumThreads[0] << ','
-       << EffectiveNumThreads[1] << ','
-       << EffectiveNumThreads[2] << ','
-       << LaunchArgs.Tripcount << ',';
-
-    assert(!Info || LaunchArgs.NumArgs == Info->Args.size());
-    if (LaunchArgs.NumArgs > 0) {
+    assert(!Info || !Info->Args || Info->Args->size() == LaunchArgs.NumArgs);
+    if (LaunchArgs.NumArgs > 0)
       for (size_t I = 0;;) {
-        if (Info)
-          OS << formatValueBasedOnKernelArgInfo(Info->Args[I].Ty, LaunchArgs.Args[I]);
+        if (Info && Info->Args)
+          format_provider<KernelArgTypeAndValue>::format({ Info->Args.value()[I].Ty, LaunchArgs.Args[I] }, *ProfilingFile, {});
         if (++I >= LaunchArgs.NumArgs)
           break;
-        OS << ';';
+        *ProfilingFile << ';';
       }
-    }
 
-    OS << ',' << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << ','; 
+    *ProfilingFile << ',' << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << ','; 
 
     auto Err =
-          SelectedKernel.launchImpl(GenericDevice, EffectiveNumThreads, EffectiveNumBlocks,
+          KernelVersion.launchImpl(GenericDevice, EffectiveNumThreads, EffectiveNumBlocks,
                      DynBlockMemConf.NativeSize, LaunchArgs, AsyncInfoWrapper);
 
-    OS << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << '\n'; 
+    *ProfilingFile << std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << '\n'; 
 
-    std::error_code EC;
-    raw_fd_ostream File(*MaybeProfilingFile, EC, sys::fs::OF_Append | sys::fs::OF_Text);
-    if (EC)
-      reportFatalUsageError(SmallString<128>{
-        "Unable to open file specified in `", ProfilingEnvar, "`: ", EC.message()
-      }.c_str());
-    File.SetUnbuffered();
-    File << Entry;
+    ProfilingFile->flush();
 
     if (Err)
       return Err;
   }
   else {
     if (auto Err =
-            SelectedKernel.launchImpl(GenericDevice, EffectiveNumThreads, EffectiveNumBlocks,
+            KernelVersion.launchImpl(GenericDevice, EffectiveNumThreads, EffectiveNumBlocks,
                        DynBlockMemConf.NativeSize, LaunchArgs, AsyncInfoWrapper))
       return Err;
-  }  
+  }
 
   if (RecordReplay) {
     // Record replay requires synchronization.
@@ -482,7 +549,7 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
       return Err;
 
     // Record the epilogue data after kernel synchronization.
-    return RecordReplay->recordEpilogue(SelectedKernel, RRHandle);
+    return RecordReplay->recordEpilogue(KernelVersion, RRHandle);
   }
   return Plugin::success();
 }

@@ -14,9 +14,18 @@
 #ifndef LLVM_TRANSFORMS_UTILS_MATERIALIZEKERNELINFO_H
 #define LLVM_TRANSFORMS_UTILS_MATERIALIZEKERNELINFO_H
 
+#include "llvm/Transforms/Utils/MaterializedKernelInfo.h"
 #include "llvm/IR/PassManager.h"
+#include <optional>
 
 namespace llvm {
+
+namespace kernel_info_utils {
+
+LLVM_ABI std::optional<KernelInfo> parseAndEraseGlobal(Module &, StringRef);
+LLVM_ABI void createGlobal(Module &, StringRef, const KernelInfo &);
+
+} // end namespace kernel_info_utils
 
 class MaterializeKernelInfoPass
     : public OptionalPassInfoMixin<MaterializeKernelInfoPass> {

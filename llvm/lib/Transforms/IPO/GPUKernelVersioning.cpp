@@ -35,6 +35,18 @@ cl::opt<bool> DisableNoAliasVersioning(
     cl::Hidden,
     cl::init(false)
 );
+cl::opt<bool> DisableAlign16Versioning(
+    "gpu-kernel-versioning-disable-align16",
+    cl::desc("Disable the generation of .align16 versions."),
+    cl::Hidden,
+    cl::init(false)
+);
+cl::opt<bool> DisableUnroll2Versioning(
+    "gpu-kernel-versioning-disable-unroll2",
+    cl::desc("Disable the generation of .unroll2 versions."),
+    cl::Hidden,
+    cl::init(false)
+);
 
 template <typename Fn>
 CallInst *getFirstCallThatSatisfies(Function &F, const Fn &Predicate) {
@@ -234,6 +246,14 @@ SmallString<64> getNoAliasSymbolName(const Function &F) {
   // TODO: get the .noalias from MaterializedKernelInfo
   return { F.getName(), ".noalias" };
 }
+SmallString<64> getAlign16SymbolName(const Function &F) {
+  // TODO: get the .align16 from MaterializedKernelInfo
+  return { F.getName(), ".align16" };
+}
+SmallString<64> getUnroll2SymbolName(const Function &F) {
+  // TODO: get the .align16 from MaterializedKernelInfo
+  return { F.getName(), ".unroll2" };
+}
 
 void cloneKernelEnvironmentForVersion(Function &Original, Function &Version) {
   Module &M = *Original.getParent();
@@ -371,6 +391,98 @@ KernelInfo createKernelInfoWith0Versions() {
   return KI;
 }
 
+// TODO: assuming last argument is dyn is dangerous. For previous versions it was different
+void addAlign16ToPtrArgsExceptDyn(Function &F) {
+  for (size_t I = 0; I < F.arg_size() - 1; ++I) {
+    auto &Arg = *F.getArg(I);
+    if (Arg.getType()->isPointerTy())
+        Arg.addAttr(Attribute::getWithAlignment(Arg.getContext(), Align(16)));
+  }
+}
+
+Function &cloneAndAddAlign16ToPtrArgsExceptDyn(Function &F) {
+  ValueToValueMapTy VMap;
+  Function &Clone = *CloneFunction(&F, VMap);
+  addAlign16ToPtrArgsExceptDyn(Clone);
+  return Clone;
+}
+
+// TODO: assuming first 2 are the global tid and bound tid is fragile
+void addAlign16ToPtrArgsExceptFirst2(Function &F) {
+  for (size_t I = 2; I < F.arg_size(); ++I) {
+    auto &Arg = *F.getArg(I);
+    if (Arg.getType()->isPointerTy())
+        Arg.addAttr(Attribute::getWithAlignment(Arg.getContext(), Align(16)));
+  }
+}
+
+Function &cloneAndAddAlign16ToPtrArgsExceptFirst2(Function &F) {
+  ValueToValueMapTy VMap;
+  Function &Clone = *CloneFunction(&F, VMap);
+  addAlign16ToPtrArgsExceptFirst2(Clone);
+  return Clone;
+}
+
+Function &specializeAlign16(Function &Kernel) {
+  Function &SpecializedKernel = cloneAndAddAlign16ToPtrArgsExceptDyn(Kernel);
+  SpecializedKernel.setName(getAlign16SymbolName(Kernel));
+
+  Function *SpecializedOutline = prepareFirstOutlineForSpecialization(SpecializedKernel);
+  if (!SpecializedOutline)
+    return SpecializedKernel;
+  // TODO: I assume the first outline has same signature as the kernel, but anyways it is not required to add the attr here i think
+  // addAlign16ToPtrArgsExceptDyn(*SpecializedOutline);
+
+  if (CallInst *Parallel = getFirstKmpcParallel60Call(*SpecializedOutline)) {
+    Function *Microtask = getMicrotask(*Parallel);
+    assert(Microtask && "expected the __kmpc_parallel_60 to contain a microtask");
+    Function &SpecializedMicrotask = cloneAndAddAlign16ToPtrArgsExceptFirst2(*Microtask);
+    Parallel->setArgOperand(5, &SpecializedMicrotask);
+  }
+
+  return SpecializedKernel;
+}
+
+Function *trySpecializeAlign16(Function &F) {
+  assert(F.hasKernelCallingConv());
+
+  const Module &M = *F.getParent();
+
+  const StringRef Align16Symbol = getAlign16SymbolName(F);
+  if (M.getNamedValue(Align16Symbol)) {
+    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped align16 specialization for kernel `"
+                      << F.getName() << "` because `" << Align16Symbol << "` already exists\n");
+    return nullptr;
+  }
+
+  // TODO: codegen does not add alignment attributes to kernel args no?
+
+  return &specializeAlign16(F);
+}
+
+Function &specializeUnroll2(Function &Kernel) {
+  // TODO: implement. this is a noop right now, the kernel is cloned but not transformed
+  ValueToValueMapTy VMap;
+  Function &SpecializedKernel = *CloneFunction(&Kernel, VMap);
+  SpecializedKernel.setName(getUnroll2SymbolName(F));
+  return SpecializedKernel;
+}
+
+Function *trySpecializeUnroll2(Function &F) {
+  assert(F.hasKernelCallingConv());
+
+  const Module &M = *F.getParent();
+
+  const StringRef Unroll2Symbol = getUnroll2SymbolName(F);
+  if (M.getNamedValue(Unroll2Symbol)) {
+    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped unroll2 specialization for kernel `"
+                      << F.getName() << "` because `" << Unroll2Symbol << "` already exists\n");
+    return nullptr;
+  }
+
+  return &specializeUnroll2(F);
+}
+
 } // namespace
 
 PreservedAnalyses GPUKernelVersioningPass::run(Module &M,
@@ -382,17 +494,22 @@ PreservedAnalyses GPUKernelVersioningPass::run(Module &M,
   for (Function &F : M) {
     if (!F.hasKernelCallingConv())
       continue;
-    auto &[KI, Kernel] = Worklist.emplace_back(kernel_info_utils::parseAndEraseGlobal(M, KernelInfo::getGlobalNameFor(F.getName())).value_or(createKernelInfoWith0Versions()), F);
-    if (!KI.Versions)
-      KI.Versions.emplace();
+    if (auto KI = kernel_info_utils::parseGlobal(M, KernelInfo::getGlobalNameFor(F.getName()))) {
+      if (KI->Versions)
+        continue;
+      auto &Version = Worklist.emplace_back(*KI, F);
+      Version.first.Versions.emplace();
+    } else {
+      Worklist.emplace_back(createKernelInfoWith0Versions(), F);
+    }
   }
 
-  if (!DisableNoLoopVersioning)
+  if (!DisableAlign16Versioning)
     for (size_t Size = Worklist.size(), I = 0; I < Size; ++I) {
       auto &[KI, Kernel] = Worklist[I];
-      if (Function *Version = trySpecializeNoLoop(Kernel)) {
+      if (Function *Version = trySpecializeAlign16(Kernel)) {
         cloneKernelEnvironmentForVersion(Kernel, *Version);
-        KI.Versions->push_back({ { KernelInfo::Version::Specialization::NoLoop{} } });
+        KI.Versions->push_back({ { KernelInfo::Version::Specialization::Align16{} } });
         Worklist.emplace_back(createKernelInfoWith0Versions(), *Version);
       }
     }
@@ -407,8 +524,28 @@ PreservedAnalyses GPUKernelVersioningPass::run(Module &M,
       }
     }
 
+  if (!DisableUnroll2Versioning)
+    for (size_t Size = Worklist.size(), I = 0; I < Size; ++I) {
+      auto &[KI, Kernel] = Worklist[I];
+      if (Function *Version = trySpecializeUnroll2(Kernel)) {
+        cloneKernelEnvironmentForVersion(Kernel, *Version);
+        KI.Versions->push_back({ { KernelInfo::Version::Specialization::Unroll2{} } });
+        Worklist.emplace_back(createKernelInfoWith0Versions(), *Version);
+      }
+    }
+
+  if (!DisableNoLoopVersioning)
+    for (size_t Size = Worklist.size(), I = 0; I < Size; ++I) {
+      auto &[KI, Kernel] = Worklist[I];
+      if (Function *Version = trySpecializeNoLoop(Kernel)) {
+        cloneKernelEnvironmentForVersion(Kernel, *Version);
+        KI.Versions->push_back({ { KernelInfo::Version::Specialization::NoLoop{} } });
+        Worklist.emplace_back(createKernelInfoWith0Versions(), *Version);
+      }
+    }
+
   for (const auto &[KI, Version] : Worklist)
-    kernel_info_utils::createGlobal(M, KernelInfo::getGlobalNameFor(Version.get().getName()), KI);
+    kernel_info_utils::createOrReplaceGlobal(M, KernelInfo::getGlobalNameFor(Version.get().getName()), KI);
 
   // TODO: maybe we can relax it
   return PreservedAnalyses::none();

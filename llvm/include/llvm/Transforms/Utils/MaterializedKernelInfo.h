@@ -110,8 +110,9 @@ struct KernelInfo {
     struct Specialization {
       struct NoLoop {};
       struct NoAlias {};
-      struct ArgAlignment { unsigned ArgNo, Alignment; };
-      std::variant<NoLoop, NoAlias, ArgAlignment> Variant;
+      struct Align16 {};
+      struct Unroll2 {};
+      std::variant<NoLoop, NoAlias, Align16, Unroll2> Variant;
       template <typename ...Fn>
       decltype(auto) visit(Fn &&... F) const {
         return std::visit(overloaded{ std::forward<Fn>(F)... }, Variant);
@@ -130,26 +131,14 @@ struct KernelInfo {
     Version(StringRef Str) {
       const bool Ok = Str.consume_front(".");
       assert(Ok && "A version always starts with a dot");
-      for (StringRef Specialization : split(Str, '.')) {
-        if (Specialization == StringRef("noloop")) {
-          Specializations.push_back({ Specialization::NoLoop{} });
-          continue;
-        }
-        if (Specialization == StringRef("noalias")) {
-          Specializations.push_back({ Specialization::NoAlias{} });
-          continue;
-        }
-        if (Specialization.consume_front("align")) {
-          const auto [AlignStr, ArgNoStr] = Specialization.split('$');
-          unsigned Align, ArgNo;
-          const bool AlignOk = AlignStr.getAsInteger(10, Align);
-          assert(!AlignOk);
-          const bool ArgNoOk = ArgNoStr.getAsInteger(10, ArgNo);
-          assert(!ArgNoOk);
-          Specializations.push_back({ Specialization::ArgAlignment{ ArgNo, Align } });
-          continue;
-        }
-        llvm_unreachable("unexpected specialization");
+      for (StringRef SpecializationStr : split(Str, '.')) {
+        Specializations.push_back([&]() -> Specialization {
+          if (SpecializationStr == "noloop") return { Specialization::NoLoop{} };
+          if (SpecializationStr == "noalias") return { Specialization::NoAlias{} };
+          if (SpecializationStr == "align16") return { Specialization::Align16{} };
+          if (SpecializationStr == "unroll2") return { Specialization::Unroll2{} };
+          llvm_unreachable("unexpected specialization");
+        }());
       }
     }
 
@@ -157,9 +146,10 @@ struct KernelInfo {
       SmallString<128> VersionText;
       raw_svector_ostream OS(VersionText);
       for (const auto &S : Specializations) S.visit(
-        [&](const Specialization::NoLoop &) { OS << ".noloop"; },
-        [&](const Specialization::NoAlias &) { OS << ".noalias"; },
-        [&](const Specialization::ArgAlignment &AA) { OS << ".align" << AA.Alignment << '$' << AA.ArgNo; }
+        [&](Specialization::NoLoop) { OS << ".noloop"; },
+        [&](Specialization::NoAlias) { OS << ".noalias"; },
+        [&](Specialization::Align16) { OS << ".align16"; }
+        [&](Specialization::Unroll2) { OS << ".unroll2"; }
       );
       return VersionText;
     }

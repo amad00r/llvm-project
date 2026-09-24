@@ -434,9 +434,20 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
 
                 return true;
               },
-              [](const KernelInfo::Version::Specialization::ArgAlignment &AA) {
-                // TODO: implement
-                return false;
+              [&](KernelInfo::Version::Specialization::Align16) {
+                assert(Info);
+                assert(Info->Versions);
+                if (!Info->Args)
+                  return false;
+
+                const size_t Size = Info->Args->size();
+                // TODO: here we are assuming last arg is the dynptr
+                for (size_t I = 0; I < Size - 1; ++I)
+                  if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>((*Info->Args)[I].Ty.Variant))
+                    if (reinterpret_cast<uintptr_t>(*reinterpret_cast<void **>(LaunchArgs.Args[I])) & 0b1111)
+                      return false;
+
+                return true;
               }
             );
           }

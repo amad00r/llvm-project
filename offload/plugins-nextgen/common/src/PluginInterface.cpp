@@ -90,7 +90,7 @@ Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
   GenericGlobalHandlerTy &GHandler = GenericDevice.Plugin.getGlobalHandler();
 
   // Retrieve kernel environment object for the kernel.
-  const std::string EnvironmentName = Name + "_kernel_environment";
+  const SmallString<128> EnvironmentName{ Name + "_kernel_environment" };
   if (GHandler.isSymbolInImage(GenericDevice, Image, EnvironmentName)) {
     GlobalTy KernelEnv(EnvironmentName, sizeof(KernelEnvironment), &KernelEnvironment);
     if (auto Err =
@@ -117,7 +117,7 @@ Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
 
   // Retrieve kernel information if possible.
   assert(!Info);
-  const std::string KernelInfoName = KernelInfo::getGlobalNameFor(Name);
+  const auto KernelInfoName = KernelInfo::getGlobalNameFor(Name);
   if (GHandler.isSymbolInImage(GenericDevice, Image, KernelInfoName)) {
     GlobalTy ImageKernelInfo(KernelInfoName);
     if (auto Err = GHandler.getGlobalMetadataFromImage(GenericDevice, Image,
@@ -125,38 +125,94 @@ Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
       return Err;
 
     const StringRef EncodedKernelInfo(static_cast<char *>(ImageKernelInfo.getPtr()), ImageKernelInfo.getSize() - /* null terminator */1);
+    ODBG(OLDT_Kernel) << "Found kernel info for `" << Name << "` = `" << EncodedKernelInfo << "`";
+
     const auto &KInfo = Info.emplace(EncodedKernelInfo);
 
-    ODBG(OLDT_Kernel) << "Found kernel info for `" << Name << "`:";
-    ODBG(OLDT_Kernel) << "  " << KernelInfoName << " = \"" << EncodedKernelInfo << "\"";
-
-    if (KInfo.Args) {
-      ODBG(OLDT_Kernel) << "  Found argument info:";
-      size_t I = 0;
-      for (const auto &Arg : *KInfo.Args)
-        ODBG(OLDT_Kernel) << "    typeof arg[" << I++ << "] = " << Arg.Ty.str();
-    } else {
-      ODBG(OLDT_Kernel) << "  Missing argument info.";
-    }
-
     if (KInfo.Versions) {
-      ODBG(OLDT_Kernel) << "  Found version info:";
-      for (const auto &Version : *KInfo.Versions) {
-        ODBG(OLDT_Kernel) << "    " << Version.str();
-        SmallString<128> VersionSymbol{ Name, Version.str() };
+      for (const auto &VersionInfo : *KInfo.Versions) {
+        const SmallString<128> VersionSymbol{ Name, VersionInfo.str() };
         assert(GHandler.isSymbolInImage(GenericDevice, Image, VersionSymbol));
-        auto MaybeKernelVersion = GenericDevice.constructKernel(VersionSymbol);
-        assert(MaybeKernelVersion);
-        auto &KernelVersion = *MaybeKernelVersion;
-        Error Err = KernelVersion.init(GenericDevice, Image);
+        auto Version = GenericDevice.constructKernel(VersionSymbol);
+        assert(Version);
+        Error Err = Version->init(GenericDevice, Image);
+        ODBG(OLDT_Kernel) << toString(std::move(Err));
         assert(!Err);
-        Versions.emplace_back(Version, KernelVersion);
+
+        // Insert the version in the decision tree
+        assert(!VersionInfo.Specializations.empty());
+        std::reference_wrapper<std::unique_ptr<VersionDecisionTree::Node>> CurrentNode = VersionSelector.Root;
+        for (const auto &Specialization : VersionInfo.Specializations) {
+          for (;;) {
+            if (!CurrentNode.get()) {
+              CurrentNode.get() = std::make_unique<VersionDecisionTree::Node>(VersionDecisionTree::Decision{ Specialization, {}, {} });
+              CurrentNode = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get())->True;
+              break;
+            }
+            if (auto *Decision = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get())) {
+              if (Decision->Specialization == Specialization) {
+                CurrentNode = Decision->True;
+                break;
+              }
+              CurrentNode = Decision->False;
+              continue;
+            }
+            assert(std::holds_alternative<std::reference_wrapper<GenericKernelTy>>(*CurrentNode.get()));
+
+            CurrentNode.get() = std::make_unique<VersionDecisionTree::Node>(VersionDecisionTree::Decision{ Specialization, {}, std::move(CurrentNode.get()) });
+            CurrentNode = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get())->True;
+            continue;
+          }
+        }
+        while (CurrentNode.get()) {
+          auto *Decision = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get());
+          assert(Decision && "duplicated versions");
+          CurrentNode = Decision->False;
+        }
+        CurrentNode.get() = std::make_unique<VersionDecisionTree::Node>(std::in_place_type<std::reference_wrapper<GenericKernelTy>>, *Version);
       }
-    } else {
-      ODBG(OLDT_Kernel) << "  Missing version info.";
+
+      struct DOTFormat {
+        static void rec(const VersionDecisionTree::Decision &Decision, const SmallString<32> &PartialVersion, raw_string_ostream &OS) {
+          struct PrintVisitor {
+            const SmallString<32> &PartialVersion;
+            raw_string_ostream &OS;
+            void operator()(const GenericKernelTy &Version) { OS << Version.getName(); }
+            void operator()(const VersionDecisionTree::Decision &Decision) { OS << PartialVersion << Decision.Specialization.str(); }
+          };
+          struct RecVisitor {
+            const SmallString<32> &PartialVersion;
+            raw_string_ostream &OS;
+            void operator()(const GenericKernelTy &) {}
+            void operator()(const VersionDecisionTree::Decision &Decision) { rec(Decision, PartialVersion, OS); }
+          };
+          const SmallString<32> NewPartialVersion{ PartialVersion, Decision.Specialization.str() };
+          OS << "\"" << NewPartialVersion << "\"->\"";
+          if (Decision.True) std::visit(PrintVisitor{ NewPartialVersion, OS }, *Decision.True);
+          else OS << "=Original";
+          OS << "\"[label=\"1\"];\"" << NewPartialVersion << "\"->\"";
+          if (Decision.False) std::visit(PrintVisitor{ PartialVersion, OS }, *Decision.False);
+          else OS << "=Original";
+          OS << "\"[label=\"0\"];";
+          if (Decision.True) std::visit(RecVisitor{ NewPartialVersion, OS }, *Decision.True);
+          if (Decision.False) std::visit(RecVisitor{ PartialVersion, OS }, *Decision.False);
+        }
+        static std::string from(const VersionDecisionTree &Tree) {
+          std::string Result;
+          raw_string_ostream OS(Result);
+          OS << "digraph{";
+          if (Tree.Root) {
+            const auto *Decision = std::get_if<VersionDecisionTree::Decision>(&*Tree.Root);
+            assert(Decision);
+            rec(*Decision, {}, OS);
+          }
+          OS << "}";
+          return Result;
+        }
+      };
+      ODBG(OLDT_Kernel) << "Built version decision tree for `" << Name << "` in DOT format `" << DOTFormat::from(VersionSelector) << "`";
     }
-  } else {
-    ODBG(OLDT_Kernel) << "There is no kernel info available for `" << Name << "`";
+
   }
 
   return initImpl(GenericDevice, Image);
@@ -403,71 +459,64 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
         EffectiveNumThreads[0], LaunchArgs.Flags.StrictThreads,
         LaunchArgs.UserThreadLimit[0] > 0);
 
+
   const GenericKernelTy &KernelVersion = [&, this]() -> const GenericKernelTy & {
-    std::reference_wrapper<const GenericKernelTy> SelectedVersion = *this;
+    // std::reference_wrapper<const GenericKernelTy> SelectedVersion = *this;
+    std::reference_wrapper<const std::unique_ptr<VersionDecisionTree::Node>> CurrentNode = VersionSelector.Root;
 
     for (;;) {
-      const GenericKernelTy *NextVersion = nullptr;
+      if (!CurrentNode.get())
+        return *this;
 
-      for (const auto &[Details, Version] : SelectedVersion.get().Versions) {
-        const bool IsMatch = std::all_of(
-          Details.Specializations.begin(),
-          Details.Specializations.end(),
-          [&](const auto &Specialization) {
-            return Specialization.visit(
-              [&](KernelInfo::Version::Specialization::NoLoop) {
-                return EffectiveNumThreads[0]*EffectiveNumBlocks[0] >= LaunchArgs.Tripcount;
-              },
-              [&, this](KernelInfo::Version::Specialization::NoAlias) {
-                assert(Info);
-                assert(Info->Versions);
-                if (!Info->Args)
-                  return false;
+      if (const auto *Version = std::get_if<std::reference_wrapper<GenericKernelTy>>(&*CurrentNode.get()))
+        return *Version;
 
-                const auto It0 = std::find_if(Info->Args->begin(), Info->Args->end(), [](const KernelInfo::Argument &Arg) { return std::holds_alternative<KernelInfo::Argument::Type::Ptr>(Arg.Ty.Variant); });
-                assert(It0 != Info->Args->end());
+      const auto *Decision = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get());
+      assert(Decision);
+      const bool Ok = Decision->Specialization.visit(
+        [&](KernelInfo::Version::Specialization::NoLoop) {
+          return EffectiveNumThreads[0]*EffectiveNumBlocks[0] >= LaunchArgs.Tripcount;
+        },
+        [&, this](KernelInfo::Version::Specialization::NoAlias) {
+          assert(Info);
+          assert(Info->Versions);
+          if (!Info->Args)
+            return false;
 
-                for (auto It = std::next(It0); It != Info->Args->end(); ++It)
-                  if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>(It->Ty.Variant))
-                    if (LaunchArgs.ObjBasePtrs[std::distance(Info->Args->begin(), It0)] == LaunchArgs.ObjBasePtrs[std::distance(Info->Args->begin(), It)])
-                      return false;
+          const auto It0 = std::find_if(Info->Args->begin(), Info->Args->end(), [](const KernelInfo::Argument &Arg) { return std::holds_alternative<KernelInfo::Argument::Type::Ptr>(Arg.Ty.Variant); });
+          assert(It0 != Info->Args->end());
 
-                return true;
-              },
-              [&](KernelInfo::Version::Specialization::Align16) {
-                assert(Info);
-                assert(Info->Versions);
-                if (!Info->Args)
-                  return false;
+          for (auto It = std::next(It0); It != Info->Args->end(); ++It)
+            if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>(It->Ty.Variant))
+              if (LaunchArgs.ObjBasePtrs[std::distance(Info->Args->begin(), It0)] == LaunchArgs.ObjBasePtrs[std::distance(Info->Args->begin(), It)])
+                return false;
 
-                const size_t Size = Info->Args->size();
-                // TODO: here we are assuming last arg is the dynptr
-                for (size_t I = 0; I < Size - 1; ++I)
-                  if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>((*Info->Args)[I].Ty.Variant))
-                    if (reinterpret_cast<uintptr_t>(*reinterpret_cast<void **>(LaunchArgs.Args[I])) & 0b1111)
-                      return false;
+          return true;
+        },
+        [&](KernelInfo::Version::Specialization::Align16) {
+          assert(Info);
+          assert(Info->Versions);
+          if (!Info->Args)
+            return false;
 
-                return true;
-              }
-            );
-          }
-        );
-        if (IsMatch) {
-          NextVersion = &Version.get();
-          // Pick the first valid version at this tree depth
-          // TODO: this can be improved
-          break;
+          const size_t Size = Info->Args->size();
+          // TODO: here we are assuming last arg is the dynptr
+          for (size_t I = 0; I < Size - 1; ++I)
+            if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>((*Info->Args)[I].Ty.Variant))
+              if (reinterpret_cast<uintptr_t>(*reinterpret_cast<void **>(LaunchArgs.Args[I])) & 0b1111)
+                return false;
+
+          return true;
+        },
+        [](KernelInfo::Version::Specialization::Unroll2) {
+          // TODO: implement
+          return false;
         }
-      }
+      );
 
-      if (!NextVersion)
-        // No valid version found; stop hierarchy traversal
-        break;
-
-      SelectedVersion = *NextVersion;
+      CurrentNode = Ok ? Decision->True : Decision->False;
+      continue;
     }
-
-    return SelectedVersion;
   }();
 
   auto DynBlockMemConfOrErr = KernelVersion.prepareBlockMemory(

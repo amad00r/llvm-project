@@ -22,8 +22,11 @@ namespace llvm {
 
 namespace kernel_info_utils {
 
-LLVM_ABI std::optional<KernelInfo> parseGlobal(Module &, StringRef);
-LLVM_ABI void createOrReplaceGlobal(Module &, StringRef, const KernelInfo &);
+LLVM_ABI GlobalVariable *getFor(const Function &);
+LLVM_ABI KernelInfo parse(const GlobalVariable &);
+LLVM_ABI GlobalVariable &createGlobalFor(Function &, const KernelInfo &);
+LLVM_ABI void replaceGlobal(GlobalVariable &, const KernelInfo &);
+LLVM_ABI GlobalVariable &createOrReplaceGlobalFor(Function &, const KernelInfo &);
 
 } // end namespace kernel_info_utils
 

@@ -32,32 +32,27 @@ struct KernelInfo {
   template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
   template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
-  static std::string getGlobalNameFor(StringRef KernelName) {
-    return (KernelName + "_kernel_info").str();
+  static SmallString<128> getGlobalNameFor(StringRef KernelName) {
+    return { KernelName, "_kernel_info" };
   }
 
   struct Argument {
     struct Type {
       struct Unknown {
         bool operator==(Unknown) const { return true; }
-        bool operator!=(Unknown) const { return false; }
       };
       struct Int {
         unsigned BitWidth;
         bool operator==(const Int &Other) const { return BitWidth == Other.BitWidth; }
-        bool operator!=(const Int &Other) const { return !(*this == Other); }
       };
       struct Float {
         bool operator==(Float) const { return true; }
-        bool operator!=(Float) const { return false; }
       };
       struct Double {
         bool operator==(Double) const { return true; }
-        bool operator!=(Double) const { return false; }
       };
       struct Ptr {
         bool operator==(Ptr) const { return true; }
-        bool operator!=(Ptr) const { return false; }
       };
       std::variant<Unknown, Int, Float, Double, Ptr> Variant;
 
@@ -108,18 +103,37 @@ struct KernelInfo {
 
   struct Version {
     struct Specialization {
-      struct NoLoop {};
-      struct NoAlias {};
-      struct Align16 {};
-      struct Unroll2 {};
+      struct NoLoop {
+        bool operator==(NoLoop) const { return true; }
+      };
+      struct NoAlias {
+        bool operator==(NoAlias) const { return true; }
+      };
+      struct Align16 {
+        bool operator==(Align16) const { return true; }
+      };
+      struct Unroll2 {
+        bool operator==(Unroll2) const { return true; }
+      };
       std::variant<NoLoop, NoAlias, Align16, Unroll2> Variant;
       template <typename ...Fn>
       decltype(auto) visit(Fn &&... F) const {
         return std::visit(overloaded{ std::forward<Fn>(F)... }, Variant);
       }
+      bool operator==(const Specialization &Other) const {
+          return Variant == Other.Variant;
+        }
+      bool operator!=(const Specialization &Other) const { return !(*this == Other); }
+      SmallString<16> str() const {
+        return visit(
+          [](NoLoop) -> SmallString<16> { return { ".noloop" }; },
+          [](NoAlias) -> SmallString<16> { return { ".noalias" }; },
+          [](Align16) -> SmallString<16> { return { ".align16" }; },
+          [](Unroll2) -> SmallString<16> { return { ".unroll2" }; }
+        );
+      }
     };
-    
-    // TODO: this should be a set if we want to compare Versions. otherwise, versions with permutated specializations are considered to be different
+
     SmallVector<Specialization, 8> Specializations;
 
     Version() = default;
@@ -145,12 +159,8 @@ struct KernelInfo {
     SmallString<128> str() const {
       SmallString<128> VersionText;
       raw_svector_ostream OS(VersionText);
-      for (const auto &S : Specializations) S.visit(
-        [&](Specialization::NoLoop) { OS << ".noloop"; },
-        [&](Specialization::NoAlias) { OS << ".noalias"; },
-        [&](Specialization::Align16) { OS << ".align16"; }
-        [&](Specialization::Unroll2) { OS << ".unroll2"; }
-      );
+      for (const auto &S : Specializations)
+        OS << S.str();
       return VersionText;
     }
   };

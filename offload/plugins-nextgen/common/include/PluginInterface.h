@@ -636,8 +636,17 @@ private:
   /// The kernel information found in the device image.
   std::optional<KernelInfo> Info;
 
-  /// The different specialized versions of the kernel.
-  SmallVector<std::pair<KernelInfo::Version, std::reference_wrapper<GenericKernelTy>>, 8> Versions;
+  struct VersionDecisionTree {
+    struct Decision;
+    using Node = std::variant<std::reference_wrapper<GenericKernelTy>, Decision>;
+    struct Decision {
+      KernelInfo::Version::Specialization Specialization;
+      std::unique_ptr<Node> True, False;
+    };
+    // TODO: explore starting from Decision instead of Node
+    std::unique_ptr<Node> Root;
+  };
+  VersionDecisionTree VersionSelector;
 
   /// The image that contains this kernel.
   DeviceImageTy *ImagePtr = nullptr;

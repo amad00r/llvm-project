@@ -238,48 +238,28 @@ void specializeOutlineNoLoop(Function &Outline) {
   Parallel->setArgOperand(5, &specializeMicrotaskNoLoop(*Microtask));
 }
 
-SmallString<64> getNoLoopSymbolName(const Function &F) {
-  // TODO: get the .noloop from MaterializedKernelInfo
-  return { F.getName(), ".noloop" };
-}
-SmallString<64> getNoAliasSymbolName(const Function &F) {
-  // TODO: get the .noalias from MaterializedKernelInfo
-  return { F.getName(), ".noalias" };
-}
-SmallString<64> getAlign16SymbolName(const Function &F) {
-  // TODO: get the .align16 from MaterializedKernelInfo
-  return { F.getName(), ".align16" };
-}
-SmallString<64> getUnroll2SymbolName(const Function &F) {
-  // TODO: get the .align16 from MaterializedKernelInfo
-  return { F.getName(), ".unroll2" };
-}
+// void cloneKernelEnvironmentForVersion(Module &M, StringRef BaseKernelName, StringRef VersionKernelName) {
+//   const SmallString<128> OriginalKernelEnvSymbol{ BaseKernelName, "_kernel_environment" };
+//   GlobalVariable *OriginalKernelEnvGV = M.getNamedGlobal(OriginalKernelEnvSymbol);
+//   assert(OriginalKernelEnvGV);
 
-void cloneKernelEnvironmentForVersion(Function &Original, Function &Version) {
-  Module &M = *Original.getParent();
-  assert(&M == Version.getParent());
-
-  const SmallString<128> OriginalKernelEnvSymbol{ Original.getName(), "_kernel_environment" };
-  GlobalVariable *OriginalKernelEnvGV = M.getNamedGlobal(OriginalKernelEnvSymbol);
-  assert(OriginalKernelEnvGV);
-
-  const SmallString<128> VersionKernelEnvSymbol{ Version.getName(), "_kernel_environment" };
-  assert(!M.getNamedGlobal(VersionKernelEnvSymbol));
-  GlobalVariable *VersionKernelEnvGV = new GlobalVariable(
-    M,
-    OriginalKernelEnvGV->getValueType(),
-    OriginalKernelEnvGV->isConstant(),
-    OriginalKernelEnvGV->getLinkage(),
-    OriginalKernelEnvGV->hasInitializer() ? OriginalKernelEnvGV->getInitializer() : nullptr,
-    VersionKernelEnvSymbol,
-    nullptr,
-    OriginalKernelEnvGV->getThreadLocalMode(),
-    OriginalKernelEnvGV->getType()->getAddressSpace(),
-    OriginalKernelEnvGV->isExternallyInitialized()
-  );
-  assert(VersionKernelEnvGV);
-  VersionKernelEnvGV->copyAttributesFrom(OriginalKernelEnvGV);
-}
+//   const SmallString<128> VersionKernelEnvSymbol{ VersionKernelName, "_kernel_environment" };
+//   assert(!M.getNamedGlobal(VersionKernelEnvSymbol));
+//   GlobalVariable *VersionKernelEnvGV = new GlobalVariable(
+//     M,
+//     OriginalKernelEnvGV->getValueType(),
+//     OriginalKernelEnvGV->isConstant(),
+//     OriginalKernelEnvGV->getLinkage(),
+//     OriginalKernelEnvGV->hasInitializer() ? OriginalKernelEnvGV->getInitializer() : nullptr,
+//     VersionKernelEnvSymbol,
+//     nullptr,
+//     OriginalKernelEnvGV->getThreadLocalMode(),
+//     OriginalKernelEnvGV->getType()->getAddressSpace(),
+//     OriginalKernelEnvGV->isExternallyInitialized()
+//   );
+//   assert(VersionKernelEnvGV);
+//   VersionKernelEnvGV->copyAttributesFrom(OriginalKernelEnvGV);
+// }
 
 Function *prepareFirstOutlineForSpecialization(Function &F) {
   const Twine SpecializedOutlineName{ F.getName(), "_omp_outlined" };
@@ -296,10 +276,16 @@ Function *prepareFirstOutlineForSpecialization(Function &F) {
   return &ClonedOutlineFn;
 }
 
-Function &specializeNoLoop(Function &Kernel) {
+Function &CloneKernel(Function &Kernel) {
   ValueToValueMapTy VMap;
-  Function &SpecializedKernel = *CloneFunction(&Kernel, VMap);
-  SpecializedKernel.setName(getNoLoopSymbolName(Kernel));
+  Function *ClonedKernel = CloneFunction(&Kernel, VMap);
+  assert(ClonedKernel);
+  ClonedKernel->setLinkage(GlobalValue::LinkageTypes::PrivateLinkage);
+  return *ClonedKernel;
+}
+
+Function &specializeNoLoop(Function &Kernel) {
+  Function &SpecializedKernel = CloneKernel(Kernel);
 
   Function *SpecializedOutline = prepareFirstOutlineForSpecialization(SpecializedKernel);
   assert(SpecializedOutline);
@@ -310,15 +296,6 @@ Function &specializeNoLoop(Function &Kernel) {
 
 Function *trySpecializeNoLoop(Function &F) {
   assert(F.hasKernelCallingConv());
-
-  const Module &M = *F.getParent();
-
-  const StringRef NoLoopSymbol = getNoLoopSymbolName(F);
-  if (M.getNamedValue(NoLoopSymbol)) {
-    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped no-loop specialization for kernel `"
-                      << F.getName() << "` because `" << NoLoopSymbol << "` already exists\n");
-    return nullptr;
-  }
 
   if (!isDistributeParallelFor(F)) {
     LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped no-loop specialization for kernel `"
@@ -335,16 +312,9 @@ void addNoAliasToPtrArgs(Function &F) {
         Arg.addAttr(Attribute::NoAlias);
 }
 
-Function &cloneAndAddNoAliasToPtrArgs(Function &F) {
-  ValueToValueMapTy VMap;
-  Function &Clone = *CloneFunction(&F, VMap);
-  addNoAliasToPtrArgs(Clone);
-  return Clone;
-}
-
 Function &specializeNoAlias(Function &Kernel) {
-  Function &SpecializedKernel = cloneAndAddNoAliasToPtrArgs(Kernel);
-  SpecializedKernel.setName(getNoAliasSymbolName(Kernel));
+  Function &SpecializedKernel = CloneKernel(Kernel);
+  addNoAliasToPtrArgs(SpecializedKernel);
 
   Function *SpecializedOutline = prepareFirstOutlineForSpecialization(SpecializedKernel);
   if (!SpecializedOutline)
@@ -354,7 +324,9 @@ Function &specializeNoAlias(Function &Kernel) {
   if (CallInst *Parallel = getFirstKmpcParallel60Call(*SpecializedOutline)) {
     Function *Microtask = getMicrotask(*Parallel);
     assert(Microtask && "expected the __kmpc_parallel_60 to contain a microtask");
-    Function &SpecializedMicrotask = cloneAndAddNoAliasToPtrArgs(*Microtask);
+    ValueToValueMapTy VMap;
+    Function &SpecializedMicrotask = *CloneFunction(Microtask, VMap);
+    addNoAliasToPtrArgs(SpecializedMicrotask);
     // const Twine SpecializedMicrotaskName{ SpecializedOutline.getName(), "_omp_outlined" };
     // assert(!SpecializedMicrotask.getParent()->getNamedValue(SpecializedMicrotaskName));
     // SpecializedMicrotask.setName(SpecializedMicrotaskName);
@@ -366,15 +338,6 @@ Function &specializeNoAlias(Function &Kernel) {
 
 Function *trySpecializeNoAlias(Function &F) {
   assert(F.hasKernelCallingConv());
-
-  const Module &M = *F.getParent();
-
-  const StringRef NoAliasSymbol = getNoAliasSymbolName(F);
-  if (M.getNamedValue(NoAliasSymbol)) {
-    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped noalias specialization for kernel `"
-                      << F.getName() << "` because `" << NoAliasSymbol << "` already exists\n");
-    return nullptr;
-  }
 
   if (!std::any_of(F.args().begin(), F.args().end(), [](const Argument &Arg) { return Arg.getType()->isPointerTy() && !Arg.hasNoAliasAttr(); })) {
     LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped noalias specialization for kernel `"
@@ -400,13 +363,6 @@ void addAlign16ToPtrArgsExceptDyn(Function &F) {
   }
 }
 
-Function &cloneAndAddAlign16ToPtrArgsExceptDyn(Function &F) {
-  ValueToValueMapTy VMap;
-  Function &Clone = *CloneFunction(&F, VMap);
-  addAlign16ToPtrArgsExceptDyn(Clone);
-  return Clone;
-}
-
 // TODO: assuming first 2 are the global tid and bound tid is fragile
 void addAlign16ToPtrArgsExceptFirst2(Function &F) {
   for (size_t I = 2; I < F.arg_size(); ++I) {
@@ -416,16 +372,9 @@ void addAlign16ToPtrArgsExceptFirst2(Function &F) {
   }
 }
 
-Function &cloneAndAddAlign16ToPtrArgsExceptFirst2(Function &F) {
-  ValueToValueMapTy VMap;
-  Function &Clone = *CloneFunction(&F, VMap);
-  addAlign16ToPtrArgsExceptFirst2(Clone);
-  return Clone;
-}
-
 Function &specializeAlign16(Function &Kernel) {
-  Function &SpecializedKernel = cloneAndAddAlign16ToPtrArgsExceptDyn(Kernel);
-  SpecializedKernel.setName(getAlign16SymbolName(Kernel));
+  Function &SpecializedKernel = CloneKernel(Kernel);
+  addAlign16ToPtrArgsExceptDyn(SpecializedKernel);
 
   Function *SpecializedOutline = prepareFirstOutlineForSpecialization(SpecializedKernel);
   if (!SpecializedOutline)
@@ -436,7 +385,9 @@ Function &specializeAlign16(Function &Kernel) {
   if (CallInst *Parallel = getFirstKmpcParallel60Call(*SpecializedOutline)) {
     Function *Microtask = getMicrotask(*Parallel);
     assert(Microtask && "expected the __kmpc_parallel_60 to contain a microtask");
-    Function &SpecializedMicrotask = cloneAndAddAlign16ToPtrArgsExceptFirst2(*Microtask);
+    ValueToValueMapTy VMap;
+    Function &SpecializedMicrotask = *CloneFunction(Microtask, VMap);
+    addAlign16ToPtrArgsExceptFirst2(SpecializedMicrotask);
     Parallel->setArgOperand(5, &SpecializedMicrotask);
   }
 
@@ -445,16 +396,6 @@ Function &specializeAlign16(Function &Kernel) {
 
 Function *trySpecializeAlign16(Function &F) {
   assert(F.hasKernelCallingConv());
-
-  const Module &M = *F.getParent();
-
-  const StringRef Align16Symbol = getAlign16SymbolName(F);
-  if (M.getNamedValue(Align16Symbol)) {
-    LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped align16 specialization for kernel `"
-                      << F.getName() << "` because `" << Align16Symbol << "` already exists\n");
-    return nullptr;
-  }
-
   // TODO: codegen does not add alignment attributes to kernel args no?
 
   return &specializeAlign16(F);
@@ -462,26 +403,88 @@ Function *trySpecializeAlign16(Function &F) {
 
 Function &specializeUnroll2(Function &Kernel) {
   // TODO: implement. this is a noop right now, the kernel is cloned but not transformed
-  ValueToValueMapTy VMap;
-  Function &SpecializedKernel = *CloneFunction(&Kernel, VMap);
-  SpecializedKernel.setName(getUnroll2SymbolName(F));
+  Function &SpecializedKernel = CloneKernel(Kernel);
   return SpecializedKernel;
 }
 
 Function *trySpecializeUnroll2(Function &F) {
   assert(F.hasKernelCallingConv());
 
-  const Module &M = *F.getParent();
-
-  const StringRef Unroll2Symbol = getUnroll2SymbolName(F);
-  if (M.getNamedValue(Unroll2Symbol)) {
+  if (!isDistributeParallelFor(F)) {
     LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped unroll2 specialization for kernel `"
-                      << F.getName() << "` because `" << Unroll2Symbol << "` already exists\n");
+                      << F.getName() << "` because it does not have distribute parallel for structure\n");
     return nullptr;
   }
 
   return &specializeUnroll2(F);
 }
+
+class VersioningCache {
+private:
+  StringMap<std::optional<std::pair<std::reference_wrapper<Function>, std::reference_wrapper<GlobalVariable>>>> Cache;
+
+  const decltype(Cache)::mapped_type &tryCreateVersionRec(KernelInfo::Version &VersionInfo) {
+    const auto VersionStr = VersionInfo.str();
+    {
+      auto It = Cache.find(VersionStr);
+      if (It != Cache.end()) return It->second;
+    }
+    assert(!VersionInfo.Specializations.empty());
+    KernelInfo::Version::Specialization LastSpecialization = VersionInfo.Specializations.back();
+    VersionInfo.Specializations.pop_back();
+    const auto &PreviousVersion = tryCreateVersionRec(VersionInfo);
+    if (!PreviousVersion) {
+      const auto [It, Inserted] = Cache.insert({ VersionStr, {} });
+      assert(Inserted);
+      return It->second;
+    }
+    Function &PreviousVersionFn = PreviousVersion->first;
+    Function *Version = LastSpecialization.visit(
+      [&](KernelInfo::Version::Specialization::NoLoop) { return DisableNoLoopVersioning ? &PreviousVersionFn : trySpecializeNoLoop(PreviousVersionFn); },
+      [&](KernelInfo::Version::Specialization::NoAlias) { return DisableNoAliasVersioning ? &PreviousVersionFn : trySpecializeNoAlias(PreviousVersionFn); },
+      [&](KernelInfo::Version::Specialization::Align16) { return DisableAlign16Versioning ? &PreviousVersionFn : trySpecializeAlign16(PreviousVersionFn); },
+      [&](KernelInfo::Version::Specialization::Unroll2) { return DisableUnroll2Versioning ? &PreviousVersionFn : trySpecializeUnroll2(PreviousVersionFn); }
+    );
+    if (!Version) {
+      const auto [It, Inserted] = Cache.insert({ VersionStr, {} });
+      assert(Inserted);
+      return It->second;
+    }
+
+    if (Version == &PreviousVersionFn)
+      return PreviousVersion;
+
+    const auto [It, Inserted] = Cache.insert({ VersionStr, std::make_pair(std::ref(*Version), std::ref(kernel_info_utils::createGlobalFor(*Version, createKernelInfoWith0Versions()))) });
+    assert(Inserted);
+    return It->second;
+  }
+
+public:
+  VersioningCache(Function &Original, GlobalVariable &OriginalKernelInfo) : Cache{ { {}, std::make_pair(std::ref(Original), std::ref(OriginalKernelInfo)) } } {}
+
+  const decltype(Cache)::mapped_type &tryCreateVersion(const KernelInfo::Version &VersionInfo) {
+    auto V = VersionInfo;
+    return tryCreateVersionRec(V);
+  }
+};
+
+const KernelInfo::Version Versions[] = {
+  { { KernelInfo::Version::Specialization::Align16{} } },
+  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::NoAlias{} } },
+  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::Unroll2{} } },
+  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::Unroll2{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
+  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
+  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::Unroll2{} } },
+  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::Unroll2{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
+  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
+  { { KernelInfo::Version::Specialization::NoAlias{} } },
+  { { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::Unroll2{} } },
+  { { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::Unroll2{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
+  { { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
+  { { KernelInfo::Version::Specialization::Unroll2{} } },
+  { { KernelInfo::Version::Specialization::Unroll2{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
+  { { KernelInfo::Version::Specialization::NoLoop{} } }
+};
 
 } // namespace
 
@@ -490,62 +493,57 @@ PreservedAnalyses GPUKernelVersioningPass::run(Module &M,
   if (!M.getTargetTriple().isGPU())
     return PreservedAnalyses::all();
 
-  SmallVector<std::pair<KernelInfo, std::reference_wrapper<Function>>, 16> Worklist;
-  for (Function &F : M) {
-    if (!F.hasKernelCallingConv())
+  SmallVector<std::reference_wrapper<Function>, 16> Kernels;
+  for (Function &F : M)
+    if (F.hasKernelCallingConv())
+      Kernels.emplace_back(F);
+
+  for (Function &Kernel : Kernels) {
+    struct KernelInfoValueAndGlobal { KernelInfo Value; GlobalVariable &Global; };
+    auto KI = [&]() -> KernelInfoValueAndGlobal {
+      if (GlobalVariable *KIGVar = kernel_info_utils::getFor(Kernel))
+        return { kernel_info_utils::parse(*KIGVar), *KIGVar };
+      return { {}, kernel_info_utils::createGlobalFor(Kernel, {}) };
+    }();
+    if (KI.Value.Versions)
       continue;
-    if (auto KI = kernel_info_utils::parseGlobal(M, KernelInfo::getGlobalNameFor(F.getName()))) {
-      if (KI->Versions)
+
+    VersioningCache Cache(Kernel, KI.Global);
+    auto &SuccessfulVersions = KI.Value.Versions.emplace();
+
+    for (const auto &VersionInfo : Versions) {
+      const SmallString<128> VersionSymbol{ Kernel.getName(), VersionInfo.str() };
+      if (M.getNamedValue(VersionSymbol)) {
+        LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped version `" << VersionSymbol << "` because the symbol already exists\n");
         continue;
-      auto &Version = Worklist.emplace_back(*KI, F);
-      Version.first.Versions.emplace();
-    } else {
-      Worklist.emplace_back(createKernelInfoWith0Versions(), F);
+      }
+
+      const auto &Version = Cache.tryCreateVersion(VersionInfo);
+      if (!Version)
+        continue;
+
+      assert(!M.getNamedValue(VersionSymbol));
+      GlobalAlias::create(Kernel.getLinkage(), VersionSymbol, &Version->first.get());
+      // appendToCompilerUsed(M, { Version });
+
+      const auto VersionKernelInfoSymbol = KernelInfo::getGlobalNameFor(VersionSymbol);
+      assert(!M.getNamedGlobal(VersionKernelInfoSymbol));
+      // GlobalVariable *KernelInfoGVar = M.getNamedGlobal(KernelInfo::getGlobalNameFor(Version->getName()));
+      // assert(KernelInfoGVar);
+      GlobalAlias::create(Kernel.getLinkage(), VersionKernelInfoSymbol, &Version->second.get());
+      // appendToCompilerUsed(M, { KernelInfoGVar });
+
+      const SmallString<128> VersionKernelEnvironmentSymbol{ VersionSymbol, "_kernel_environment" };
+      assert(!M.getNamedGlobal(KernelInfo::getGlobalNameFor(VersionKernelEnvironmentSymbol)));
+      GlobalVariable *KernelEnvironmentGVar = M.getNamedGlobal(SmallString<128>{ Kernel.getName(), "_kernel_environment" });
+      assert(KernelEnvironmentGVar);
+      GlobalAlias::create(VersionKernelEnvironmentSymbol, KernelEnvironmentGVar);
+
+      SuccessfulVersions.emplace_back(VersionInfo);
     }
+
+    kernel_info_utils::replaceGlobal(KI.Global, KI.Value);
   }
-
-  if (!DisableAlign16Versioning)
-    for (size_t Size = Worklist.size(), I = 0; I < Size; ++I) {
-      auto &[KI, Kernel] = Worklist[I];
-      if (Function *Version = trySpecializeAlign16(Kernel)) {
-        cloneKernelEnvironmentForVersion(Kernel, *Version);
-        KI.Versions->push_back({ { KernelInfo::Version::Specialization::Align16{} } });
-        Worklist.emplace_back(createKernelInfoWith0Versions(), *Version);
-      }
-    }
-
-  if (!DisableNoAliasVersioning)
-    for (size_t Size = Worklist.size(), I = 0; I < Size; ++I) {
-      auto &[KI, Kernel] = Worklist[I];
-      if (Function *Version = trySpecializeNoAlias(Kernel)) {
-        cloneKernelEnvironmentForVersion(Kernel, *Version);
-        KI.Versions->push_back({ { KernelInfo::Version::Specialization::NoAlias{} } });
-        Worklist.emplace_back(createKernelInfoWith0Versions(), *Version);
-      }
-    }
-
-  if (!DisableUnroll2Versioning)
-    for (size_t Size = Worklist.size(), I = 0; I < Size; ++I) {
-      auto &[KI, Kernel] = Worklist[I];
-      if (Function *Version = trySpecializeUnroll2(Kernel)) {
-        cloneKernelEnvironmentForVersion(Kernel, *Version);
-        KI.Versions->push_back({ { KernelInfo::Version::Specialization::Unroll2{} } });
-        Worklist.emplace_back(createKernelInfoWith0Versions(), *Version);
-      }
-    }
-
-  if (!DisableNoLoopVersioning)
-    for (size_t Size = Worklist.size(), I = 0; I < Size; ++I) {
-      auto &[KI, Kernel] = Worklist[I];
-      if (Function *Version = trySpecializeNoLoop(Kernel)) {
-        cloneKernelEnvironmentForVersion(Kernel, *Version);
-        KI.Versions->push_back({ { KernelInfo::Version::Specialization::NoLoop{} } });
-        Worklist.emplace_back(createKernelInfoWith0Versions(), *Version);
-      }
-    }
-
-  for (const auto &[KI, Version] : Worklist)
-    kernel_info_utils::createOrReplaceGlobal(M, KernelInfo::getGlobalNameFor(Version.get().getName()), KI);
 
   // TODO: maybe we can relax it
   return PreservedAnalyses::none();

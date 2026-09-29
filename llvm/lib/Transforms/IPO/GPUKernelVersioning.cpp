@@ -9,6 +9,7 @@
 #include "llvm/Transforms/IPO/GPUKernelVersioning.h"
 #include "llvm/Transforms/Utils/MaterializedKernelInfo.h"
 #include "llvm/Transforms/Utils/MaterializeKernelInfo.h"
+#include "llvm/Transforms/IPO/OpenMPOpt.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -348,11 +349,11 @@ Function *trySpecializeNoAlias(Function &F) {
   return &specializeNoAlias(F);
 }
 
-KernelInfo createKernelInfoWith0Versions() {
-  KernelInfo KI;
-  KI.Versions.emplace();
-  return KI;
-}
+// KernelInfo createKernelInfoWith0Versions() {
+//   KernelInfo KI;
+//   KI.Versions.emplace();
+//   return KI;
+// }
 
 // TODO: assuming last argument is dyn is dangerous. For previous versions it was different
 void addAlign16ToPtrArgsExceptDyn(Function &F) {
@@ -421,69 +422,80 @@ Function *trySpecializeUnroll2(Function &F) {
 
 class VersioningCache {
 private:
-  StringMap<std::optional<std::pair<std::reference_wrapper<Function>, std::reference_wrapper<GlobalVariable>>>> Cache;
+  StringMap<Function *> Cache;
 
-  const decltype(Cache)::mapped_type &tryCreateVersionRec(KernelInfo::Version &VersionInfo) {
-    const auto VersionStr = VersionInfo.str();
+  Function *tryCreateVersionRec(KernelInfo::Version::SpecializationSequence &SpecializationSeq) {
+    const auto VersionStr = SpecializationSeq.str();
     {
       auto It = Cache.find(VersionStr);
       if (It != Cache.end()) return It->second;
     }
-    assert(!VersionInfo.Specializations.empty());
-    KernelInfo::Version::Specialization LastSpecialization = VersionInfo.Specializations.back();
-    VersionInfo.Specializations.pop_back();
-    const auto &PreviousVersion = tryCreateVersionRec(VersionInfo);
+    assert(!SpecializationSeq.Specializations.empty());
+    KernelInfo::Version::Specialization LastSpecialization = SpecializationSeq.Specializations.back();
+    SpecializationSeq.Specializations.pop_back();
+    Function *PreviousVersion = tryCreateVersionRec(SpecializationSeq);
     if (!PreviousVersion) {
-      const auto [It, Inserted] = Cache.insert({ VersionStr, {} });
+      const auto [It, Inserted] = Cache.insert({ VersionStr, nullptr });
       assert(Inserted);
       return It->second;
     }
-    Function &PreviousVersionFn = PreviousVersion->first;
     Function *Version = LastSpecialization.visit(
-      [&](KernelInfo::Version::Specialization::NoLoop) { return DisableNoLoopVersioning ? &PreviousVersionFn : trySpecializeNoLoop(PreviousVersionFn); },
-      [&](KernelInfo::Version::Specialization::NoAlias) { return DisableNoAliasVersioning ? &PreviousVersionFn : trySpecializeNoAlias(PreviousVersionFn); },
-      [&](KernelInfo::Version::Specialization::Align16) { return DisableAlign16Versioning ? &PreviousVersionFn : trySpecializeAlign16(PreviousVersionFn); },
-      [&](KernelInfo::Version::Specialization::Unroll2) { return DisableUnroll2Versioning ? &PreviousVersionFn : trySpecializeUnroll2(PreviousVersionFn); }
+      [&](KernelInfo::Version::Specialization::NoLoop) { return DisableNoLoopVersioning ? nullptr : trySpecializeNoLoop(*PreviousVersion); },
+      [&](KernelInfo::Version::Specialization::NoAlias) { return DisableNoAliasVersioning ? nullptr : trySpecializeNoAlias(*PreviousVersion); },
+      [&](KernelInfo::Version::Specialization::Align16) { return DisableAlign16Versioning ? nullptr : trySpecializeAlign16(*PreviousVersion); },
+      [&](KernelInfo::Version::Specialization::Unroll2) { return DisableUnroll2Versioning ? nullptr : trySpecializeUnroll2(*PreviousVersion); }
     );
-    if (!Version) {
-      const auto [It, Inserted] = Cache.insert({ VersionStr, {} });
-      assert(Inserted);
-      return It->second;
-    }
 
-    if (Version == &PreviousVersionFn)
-      return PreviousVersion;
+    if (Version)
+      Version->addFnAttr("version");
 
-    const auto [It, Inserted] = Cache.insert({ VersionStr, std::make_pair(std::ref(*Version), std::ref(kernel_info_utils::createGlobalFor(*Version, createKernelInfoWith0Versions()))) });
+    const auto [It, Inserted] = Cache.insert({ VersionStr, Version });
     assert(Inserted);
     return It->second;
   }
 
 public:
-  VersioningCache(Function &Original, GlobalVariable &OriginalKernelInfo) : Cache{ { {}, std::make_pair(std::ref(Original), std::ref(OriginalKernelInfo)) } } {}
+  VersioningCache(Function &Original) : Cache{ { {}, &Original } } {}
 
-  const decltype(Cache)::mapped_type &tryCreateVersion(const KernelInfo::Version &VersionInfo) {
-    auto V = VersionInfo;
-    return tryCreateVersionRec(V);
+  Function *tryCreateVersion(const KernelInfo::Version::SpecializationSequence &SpecializationSeq) {
+    auto SpecializationSeq_ = SpecializationSeq;
+    return tryCreateVersionRec(SpecializationSeq_);
   }
 };
 
-const KernelInfo::Version Versions[] = {
-  { { KernelInfo::Version::Specialization::Align16{} } },
-  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::NoAlias{} } },
-  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::Unroll2{} } },
-  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::Unroll2{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
-  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
-  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::Unroll2{} } },
-  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::Unroll2{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
-  { { KernelInfo::Version::Specialization::Align16{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
-  { { KernelInfo::Version::Specialization::NoAlias{} } },
-  { { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::Unroll2{} } },
-  { { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::Unroll2{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
-  { { KernelInfo::Version::Specialization::NoAlias{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
-  { { KernelInfo::Version::Specialization::Unroll2{} } },
-  { { KernelInfo::Version::Specialization::Unroll2{} }, { KernelInfo::Version::Specialization::NoLoop{} } },
-  { { KernelInfo::Version::Specialization::NoLoop{} } }
+// const KernelInfo::Version::SpecializationSequence SpecializationSequences[] = {
+//   { KernelInfo::Version::Specialization::Align16{} },
+//   { KernelInfo::Version::Specialization::Align16{}, KernelInfo::Version::Specialization::NoAlias{} },
+//   { KernelInfo::Version::Specialization::Align16{}, KernelInfo::Version::Specialization::NoAlias{}, KernelInfo::Version::Specialization::Unroll2{} },
+//   { KernelInfo::Version::Specialization::Align16{}, KernelInfo::Version::Specialization::NoAlias{}, KernelInfo::Version::Specialization::Unroll2{}, KernelInfo::Version::Specialization::NoLoop{} },
+//   { KernelInfo::Version::Specialization::Align16{}, KernelInfo::Version::Specialization::NoAlias{}, KernelInfo::Version::Specialization::NoLoop{} },
+//   { KernelInfo::Version::Specialization::Align16{}, KernelInfo::Version::Specialization::Unroll2{} },
+//   { KernelInfo::Version::Specialization::Align16{}, KernelInfo::Version::Specialization::Unroll2{}, KernelInfo::Version::Specialization::NoLoop{} },
+//   { KernelInfo::Version::Specialization::Align16{}, KernelInfo::Version::Specialization::NoLoop{} },
+//   { KernelInfo::Version::Specialization::NoAlias{} },
+//   { KernelInfo::Version::Specialization::NoAlias{}, KernelInfo::Version::Specialization::Unroll2{} },
+//   { KernelInfo::Version::Specialization::NoAlias{}, KernelInfo::Version::Specialization::Unroll2{}, KernelInfo::Version::Specialization::NoLoop{} },
+//   { KernelInfo::Version::Specialization::NoAlias{}, KernelInfo::Version::Specialization::NoLoop{} },
+//   { KernelInfo::Version::Specialization::Unroll2{} },
+//   { KernelInfo::Version::Specialization::Unroll2{}, KernelInfo::Version::Specialization::NoLoop{} },
+//   { KernelInfo::Version::Specialization::NoLoop{} }
+// };
+const KernelInfo::Version::SpecializationSequence SpecializationSequences[] = {
+  { ".align16" },
+  { ".align16.noalias" },
+  { ".align16.noalias.unroll2" },
+  { ".align16.noalias.unroll2.noloop" },
+  { ".align16.noalias.noloop" },
+  { ".align16.unroll2" },
+  { ".align16.unroll2.noloop" },
+  { ".align16.noloop" },
+  { ".noalias" },
+  { ".noalias.unroll2" },
+  { ".noalias.unroll2.noloop" },
+  { ".noalias.noloop" },
+  { ".unroll2" },
+  { ".unroll2.noloop" },
+  { ".noloop" }
 };
 
 } // namespace
@@ -495,54 +507,55 @@ PreservedAnalyses GPUKernelVersioningPass::run(Module &M,
 
   SmallVector<std::reference_wrapper<Function>, 16> Kernels;
   for (Function &F : M)
-    if (F.hasKernelCallingConv())
+    // TODO: for now we only support openmp kernels, but the idea is to work on different kinds of kernels later
+    if (F.hasKernelCallingConv() && omp::isOpenMPKernel(F) && !F.isDiscardableIfUnused())
       Kernels.emplace_back(F);
 
   for (Function &Kernel : Kernels) {
-    struct KernelInfoValueAndGlobal { KernelInfo Value; GlobalVariable &Global; };
-    auto KI = [&]() -> KernelInfoValueAndGlobal {
-      if (GlobalVariable *KIGVar = kernel_info_utils::getFor(Kernel))
-        return { kernel_info_utils::parse(*KIGVar), *KIGVar };
-      return { {}, kernel_info_utils::createGlobalFor(Kernel, {}) };
-    }();
-    if (KI.Value.Versions)
+    if (Kernel.hasFnAttribute("version"))
       continue;
 
-    VersioningCache Cache(Kernel, KI.Global);
-    auto &SuccessfulVersions = KI.Value.Versions.emplace();
+    auto KI = kernel_info_utils::parseGlobalFor(Kernel).value_or({});
+    if (KI.Versions)
+      continue;
 
-    for (const auto &VersionInfo : Versions) {
-      const SmallString<128> VersionSymbol{ Kernel.getName(), VersionInfo.str() };
-      if (M.getNamedValue(VersionSymbol)) {
-        LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped version `" << VersionSymbol << "` because the symbol already exists\n");
-        continue;
-      }
+    VersioningCache Cache(Kernel);
+    auto &SuccessfulVersions = KI.Versions.emplace();
+    GlobalVariable *KernelEnvironmentGVar = M.getNamedGlobal(SmallString<128>{ Kernel.getName(), "_kernel_environment" });
+    assert(KernelEnvironmentGVar);
 
-      const auto &Version = Cache.tryCreateVersion(VersionInfo);
+    for (const auto &SpecializationSeq : SpecializationSequences) {
+      // const SmallString<128> VersionSymbol{ Kernel.getName(), SpecializationSeq.str() };
+      // if (M.getNamedValue(VersionSymbol)) {
+      //   LLVM_DEBUG(dbgs() << "GPUKernelVersioning: skipped version `" << VersionSymbol << "` because the symbol already exists\n");
+      //   continue;
+      // }
+
+      Function *Version = Cache.tryCreateVersion(SpecializationSeq);
       if (!Version)
         continue;
 
-      assert(!M.getNamedValue(VersionSymbol));
-      GlobalAlias::create(Kernel.getLinkage(), VersionSymbol, &Version->first.get());
+      Version->setLinkage(Kernel.getLinkage());
+
+      // assert(!M.getNamedValue(VersionSymbol));
+      // GlobalAlias::create(Kernel.getLinkage(), VersionSymbol, Version);
       // appendToCompilerUsed(M, { Version });
 
-      const auto VersionKernelInfoSymbol = KernelInfo::getGlobalNameFor(VersionSymbol);
-      assert(!M.getNamedGlobal(VersionKernelInfoSymbol));
+      // const auto VersionKernelInfoSymbol = KernelInfo::getGlobalNameFor(VersionSymbol);
+      // assert(!M.getNamedGlobal(VersionKernelInfoSymbol));
       // GlobalVariable *KernelInfoGVar = M.getNamedGlobal(KernelInfo::getGlobalNameFor(Version->getName()));
       // assert(KernelInfoGVar);
-      GlobalAlias::create(Kernel.getLinkage(), VersionKernelInfoSymbol, &Version->second.get());
+      // GlobalAlias::create(Kernel.getLinkage(), VersionKernelInfoSymbol, &Version->second.get());
       // appendToCompilerUsed(M, { KernelInfoGVar });
 
-      const SmallString<128> VersionKernelEnvironmentSymbol{ VersionSymbol, "_kernel_environment" };
-      assert(!M.getNamedGlobal(KernelInfo::getGlobalNameFor(VersionKernelEnvironmentSymbol)));
-      GlobalVariable *KernelEnvironmentGVar = M.getNamedGlobal(SmallString<128>{ Kernel.getName(), "_kernel_environment" });
-      assert(KernelEnvironmentGVar);
+      const SmallString<128> VersionKernelEnvironmentSymbol{ Version->getName(), "_kernel_environment" };
+      assert(!M.getNamedValue(VersionKernelEnvironmentSymbol));
       GlobalAlias::create(VersionKernelEnvironmentSymbol, KernelEnvironmentGVar);
 
-      SuccessfulVersions.emplace_back(VersionInfo);
+      SuccessfulVersions.emplace_back(SpecializationSeq, Version->getName());
     }
 
-    kernel_info_utils::replaceGlobal(KI.Global, KI.Value);
+    kernel_info_utils::createOrReplaceGlobalFor(Kernel, KI);
   }
 
   // TODO: maybe we can relax it

@@ -116,7 +116,6 @@ Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
           : GenericDevice.getDefaultNumThreads();
 
   // Retrieve kernel information if possible.
-  assert(!Info);
   const auto KernelInfoName = KernelInfo::getGlobalNameFor(Name);
   if (GHandler.isSymbolInImage(GenericDevice, Image, KernelInfoName)) {
     GlobalTy ImageKernelInfo(KernelInfoName);
@@ -127,22 +126,23 @@ Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
     const StringRef EncodedKernelInfo(static_cast<char *>(ImageKernelInfo.getPtr()), ImageKernelInfo.getSize() - /* null terminator */1);
     ODBG(OLDT_Kernel) << "Found kernel info for `" << Name << "` = `" << EncodedKernelInfo << "`";
 
-    const auto &KInfo = Info.emplace(EncodedKernelInfo);
+    assert(!Info.Args);
+    assert(!Info.Versions);
+    Info = EncodedKernelInfo;
 
-    if (KInfo.Versions) {
-      for (const auto &VersionInfo : *KInfo.Versions) {
-        const SmallString<128> VersionSymbol{ Name, VersionInfo.str() };
-        assert(GHandler.isSymbolInImage(GenericDevice, Image, VersionSymbol));
-        auto Version = GenericDevice.constructKernel(VersionSymbol);
-        assert(Version);
-        Error Err = Version->init(GenericDevice, Image);
-        ODBG(OLDT_Kernel) << toString(std::move(Err));
+    if (Info.Versions) {
+      for (const auto &VersionInfo : *Info.Versions) {
+        assert(GHandler.isSymbolInImage(GenericDevice, Image, VersionInfo.Symbol));
+        auto MaybeVersion = GenericDevice.constructKernel(VersionInfo.Symbol);
+        assert(MaybeVersion);
+        GenericKernelTy &Version = *MaybeVersion;
+        Error Err = Version.init(GenericDevice, Image);
         assert(!Err);
 
         // Insert the version in the decision tree
-        assert(!VersionInfo.Specializations.empty());
+        assert(!VersionInfo.Specializations.Specializations.empty());
         std::reference_wrapper<std::unique_ptr<VersionDecisionTree::Node>> CurrentNode = VersionSelector.Root;
-        for (const auto &Specialization : VersionInfo.Specializations) {
+        for (const auto &Specialization : VersionInfo.Specializations.Specializations) {
           for (;;) {
             if (!CurrentNode.get()) {
               CurrentNode.get() = std::make_unique<VersionDecisionTree::Node>(VersionDecisionTree::Decision{ Specialization, {}, {} });
@@ -161,7 +161,7 @@ Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
 
             CurrentNode.get() = std::make_unique<VersionDecisionTree::Node>(VersionDecisionTree::Decision{ Specialization, {}, std::move(CurrentNode.get()) });
             CurrentNode = std::get_if<VersionDecisionTree::Decision>(&*CurrentNode.get())->True;
-            continue;
+            break;
           }
         }
         while (CurrentNode.get()) {
@@ -169,7 +169,7 @@ Error GenericKernelTy::init(GenericDeviceTy &GenericDevice,
           assert(Decision && "duplicated versions");
           CurrentNode = Decision->False;
         }
-        CurrentNode.get() = std::make_unique<VersionDecisionTree::Node>(std::in_place_type<std::reference_wrapper<GenericKernelTy>>, *Version);
+        CurrentNode.get() = std::make_unique<VersionDecisionTree::Node>(std::in_place_type<std::reference_wrapper<GenericKernelTy>>, Version);
       }
 
       struct DOTFormat {
@@ -335,18 +335,19 @@ Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
        getName(), NumBlocks[0], NumBlocks[1], NumBlocks[2], NumThreads[0],
        NumThreads[1], NumThreads[2], getExecutionModeName());
 
-  assert(!Info || !Info->Args || Info->Args->size() == LaunchArgs.NumArgs);
+  assert(!Info.Args || Info.Args->size() == LaunchArgs.NumArgs);
   assert(LaunchArgs.NumArgs == 0 || LaunchArgs.Args);
   for (uint32_t I = 0; I < LaunchArgs.NumArgs; ++I) {
     INFO(
       OMP_INFOTYPE_PLUGIN_KERNEL, GenericDevice.getDeviceId(), "%s",
       [&, this]() -> SmallString<128> {
         KernelInfo::Argument::Type Ty;
-        if (Info && Info->Args && I < Info->Args->size())
-          Ty = Info->Args.value()[I].Ty;
+        if (Info.Args && I < Info.Args->size())
+          Ty = Info.Args.value()[I].Ty;
 
         if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>(Ty.Variant)) return formatv(
-          "  arg[{}]={{ type={}, size={}, base_ptr={}, val={} }}\n",
+          // TODO: fix closing brace
+          "  arg[{}]={{ type={}, size={}, base_ptr={}, val={} }\n",
           I,
           Ty.str(),
           LaunchArgs.ArgSizes ? LaunchArgs.ArgSizes[I] : -1,
@@ -355,7 +356,8 @@ Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
         );
 
         return formatv(
-          "  arg[{}]={{ type={}, size={}, val={} }}\n",
+          // TODO: fix closing brace
+          "  arg[{}]={{ type={}, size={}, val={} }\n",
           I,
           Ty.str(),
           LaunchArgs.ArgSizes ? LaunchArgs.ArgSizes[I] : -1,
@@ -478,31 +480,29 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
           return EffectiveNumThreads[0]*EffectiveNumBlocks[0] >= LaunchArgs.Tripcount;
         },
         [&, this](KernelInfo::Version::Specialization::NoAlias) {
-          assert(Info);
-          assert(Info->Versions);
-          if (!Info->Args)
+          assert(Info.Versions);
+          if (!Info.Args)
             return false;
 
-          const auto It0 = std::find_if(Info->Args->begin(), Info->Args->end(), [](const KernelInfo::Argument &Arg) { return std::holds_alternative<KernelInfo::Argument::Type::Ptr>(Arg.Ty.Variant); });
-          assert(It0 != Info->Args->end());
+          const auto It0 = std::find_if(Info.Args->begin(), Info.Args->end(), [](const KernelInfo::Argument &Arg) { return std::holds_alternative<KernelInfo::Argument::Type::Ptr>(Arg.Ty.Variant); });
+          assert(It0 != Info.Args->end());
 
-          for (auto It = std::next(It0); It != Info->Args->end(); ++It)
+          for (auto It = std::next(It0); It != Info.Args->end(); ++It)
             if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>(It->Ty.Variant))
-              if (LaunchArgs.ObjBasePtrs[std::distance(Info->Args->begin(), It0)] == LaunchArgs.ObjBasePtrs[std::distance(Info->Args->begin(), It)])
+              if (LaunchArgs.ObjBasePtrs[std::distance(Info.Args->begin(), It0)] == LaunchArgs.ObjBasePtrs[std::distance(Info.Args->begin(), It)])
                 return false;
 
           return true;
         },
         [&](KernelInfo::Version::Specialization::Align16) {
-          assert(Info);
-          assert(Info->Versions);
-          if (!Info->Args)
+          assert(Info.Versions);
+          if (!Info.Args)
             return false;
 
-          const size_t Size = Info->Args->size();
+          const size_t Size = Info.Args->size();
           // TODO: here we are assuming last arg is the dynptr
           for (size_t I = 0; I < Size - 1; ++I)
-            if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>((*Info->Args)[I].Ty.Variant))
+            if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>((*Info.Args)[I].Ty.Variant))
               if (reinterpret_cast<uintptr_t>(*reinterpret_cast<void **>(LaunchArgs.Args[I])) & 0b1111)
                 return false;
 
@@ -573,11 +573,11 @@ Error GenericKernelTy::launch(GenericDeviceTy &GenericDevice,
                    << EffectiveNumThreads[2] << ','
                    << LaunchArgs.Tripcount << ',';
 
-    assert(!Info || !Info->Args || Info->Args->size() == LaunchArgs.NumArgs);
+    assert(!Info.Args || Info.Args->size() == LaunchArgs.NumArgs);
     if (LaunchArgs.NumArgs > 0)
       for (size_t I = 0;;) {
-        if (Info && Info->Args)
-          format_provider<KernelArgTypeAndValue>::format({ Info->Args.value()[I].Ty, LaunchArgs.Args[I] }, *ProfilingFile, {});
+        if (Info.Args)
+          format_provider<KernelArgTypeAndValue>::format({ Info.Args.value()[I].Ty, LaunchArgs.Args[I] }, *ProfilingFile, {});
         if (++I >= LaunchArgs.NumArgs)
           break;
         *ProfilingFile << ';';

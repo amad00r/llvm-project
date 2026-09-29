@@ -634,7 +634,7 @@ private:
   std::string Name;
 
   /// The kernel information found in the device image.
-  std::optional<KernelInfo> Info;
+  KernelInfo Info;
 
   struct VersionDecisionTree {
     struct Decision;

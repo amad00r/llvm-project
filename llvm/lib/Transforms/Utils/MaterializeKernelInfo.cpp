@@ -32,75 +32,42 @@ using namespace llvm;
 
 namespace llvm::kernel_info_utils {
 
-GlobalVariable *getFor(const Function &Kernel) {
+std::optional<KernelInfo> parseGlobalFor(Function &Kernel) {
   assert(Kernel.hasKernelCallingConv());
+
   GlobalValue *GV = Kernel.getParent()->getNamedValue(KernelInfo::getGlobalNameFor(Kernel.getName()));
   if (!GV)
-    return nullptr;
-  return cast<GlobalVariable>(GV);
-}
+    return {};
 
-KernelInfo parse(const GlobalVariable &KIGVar) {
-  const Constant *Init = KIGVar.getInitializer();
+  const auto &GVar = *cast<GlobalVariable>(GV);
+  const Constant *Init = GVar.getInitializer();
   assert(Init);
 
   if (Init->isNullValue())
-    return {};
+    return KernelInfo{};
 
   return { cast<ConstantDataArray>(Init)->getAsCString() };
 }
 
 namespace {
 
-GlobalVariable &createGlobalFor(Module &M, StringRef KISymbol, GlobalVariable::LinkageTypes Linkage, GlobalVariable::VisibilityTypes Visibility, const KernelInfo &KI) {
+void createGlobalFor(Module &M, StringRef KISymbol, GlobalVariable::LinkageTypes Linkage, GlobalVariable::VisibilityTypes Visibility, const KernelInfo &KI) {
   assert(!M.getNamedValue(KISymbol));
 
   IRBuilder<> Builder(M.getContext());
   GlobalVariable &KIGVar = *Builder.CreateGlobalString(KI.str(), KISymbol, M.getDataLayout().getDefaultGlobalsAddressSpace(), &M, true);
   KIGVar.setLinkage(Linkage);
   KIGVar.setVisibility(Visibility);
-
-  return KIGVar;
 }
 
 } // namespace
 
-GlobalVariable &createGlobalFor(Function &Kernel, const KernelInfo &KI) {
+void createGlobalFor(Function &Kernel, const KernelInfo &KI) {
   assert(Kernel.hasKernelCallingConv());
-  return createGlobalFor(*Kernel.getParent(), KernelInfo::getGlobalNameFor(Kernel.getName()), Kernel.getLinkage(), Kernel.getVisibility(), KI);
+  createGlobalFor(*Kernel.getParent(), KernelInfo::getGlobalNameFor(Kernel.getName()), Kernel.getLinkage(), Kernel.getVisibility(), KI);
 }
 
-void replaceGlobal(GlobalVariable &KIGVar, const KernelInfo &KI) {
-  assert(KIGVar.hasInitializer());
-  assert(KIGVar.getInitializer());
-  assert(KIGVar.getInitializer()->isNullValue() || cast<ConstantDataArray>(KIGVar.getInitializer())->isCString());
-
-  Module &M = *KIGVar.getParent();
-
-  KIGVar.replaceInitializer(ConstantDataArray::getString(M.getContext(), KI.str(), true));
-
-  SmallVector<std::reference_wrapper<GlobalAlias>, 4> Aliases;
-  for (User *Usr : KIGVar.users())
-    if (GlobalAlias *GA = dyn_cast<GlobalAlias>(Usr))
-      Aliases.emplace_back(*GA);
-
-  for (GlobalAlias &Alias : Aliases) {
-    GlobalAlias *NewAlias = GlobalAlias::create(
-      KIGVar.getValueType(),
-      Alias.getAddressSpace(),
-      Alias.getLinkage(),
-      "",
-      Alias.getAliasee(),
-      &M
-    );
-    NewAlias->setVisibility(Alias.getVisibility());
-    NewAlias->takeName(&Alias);
-    // Alias.replaceAllUsesWith(&NewAlias);
-    Alias.eraseFromParent();
-  }
-}
-
-GlobalVariable &createOrReplaceGlobalFor(Function &Kernel, const KernelInfo &KI) {
+void createOrReplaceGlobalFor(Function &Kernel, const KernelInfo &KI) {
   assert(Kernel.hasKernelCallingConv());
 
   Module &M = *Kernel.getParent();
@@ -108,11 +75,33 @@ GlobalVariable &createOrReplaceGlobalFor(Function &Kernel, const KernelInfo &KI)
   const auto KISymbol = KernelInfo::getGlobalNameFor(Kernel.getName());
   if (GlobalValue *GV = M.getNamedValue(KISymbol)) {
     auto &GVar = *cast<GlobalVariable>(GV);
-    replaceGlobal(GVar, KI);
-    return GVar;
-  }
+    assert(GVar.hasInitializer());
+    assert(GVar.getInitializer());
+    assert(GVar.getInitializer()->isNullValue() || cast<ConstantDataArray>(GVar.getInitializer())->isCString());
+    GVar.replaceInitializer(ConstantDataArray::getString(M.getContext(), KI.str(), true));
 
-  return createGlobalFor(*Kernel.getParent(), KISymbol, Kernel.getLinkage(), Kernel.getVisibility(), KI);
+    SmallVector<std::reference_wrapper<GlobalAlias>, 4> Aliases;
+    for (User *Usr : GVar.users())
+      if (GlobalAlias *GA = dyn_cast<GlobalAlias>(Usr))
+        Aliases.emplace_back(*GA);
+
+    for (GlobalAlias &Alias : Aliases) {
+      GlobalAlias *NewAlias = GlobalAlias::create(
+        GVar.getValueType(),
+        Alias.getAddressSpace(),
+        Alias.getLinkage(),
+        "",
+        Alias.getAliasee(),
+        &M
+      );
+      NewAlias->setVisibility(Alias.getVisibility());
+      NewAlias->takeName(&Alias);
+      // Alias.replaceAllUsesWith(&NewAlias);
+      Alias.eraseFromParent();
+    }
+  } else {
+    createGlobalFor(*Kernel.getParent(), KISymbol, Kernel.getLinkage(), Kernel.getVisibility(), KI);
+  }
 }
 
 } // end namespace llvm::kernel_info_utils
@@ -145,12 +134,7 @@ bool materializeKernelInfo(Function &F) {
   if (!F.hasKernelCallingConv())
     return false;
 
-  
-  auto KI = [&]() -> KernelInfo {
-    if (const GlobalVariable *KIGVar = kernel_info_utils::getFor(F))
-      return kernel_info_utils::parse(*KIGVar);
-    return {};
-  }();
+  auto KI = kernel_info_utils::parseGlobalFor(F).value_or({});
   assert(!KI.Args || *KI.Args == getKernelInfoArgs(F));
   KI.Args.emplace(getKernelInfoArgs(F));
 

@@ -124,6 +124,15 @@ struct KernelInfo {
           return Variant == Other.Variant;
         }
       bool operator!=(const Specialization &Other) const { return !(*this == Other); }
+      Specialization(StringRef Str)
+        : Variant([&]() -> decltype(Variant) {
+          if (Str == "noloop") return { NoLoop{} };
+          if (Str == "noalias") return { NoAlias{} };
+          if (Str == "align16") return { Align16{} };
+          if (Str == "unroll2") return { Unroll2{} };
+          llvm_unreachable("unexpected specialization");
+        }())
+      {}
       SmallString<16> str() const {
         return visit(
           [](NoLoop) -> SmallString<16> { return { ".noloop" }; },
@@ -134,34 +143,46 @@ struct KernelInfo {
       }
     };
 
-    SmallVector<Specialization, 8> Specializations;
+    struct SpecializationSequence {
+      SmallVector<Specialization, 8> Specializations;
+
+      SpecializationSequence() = default;
+
+      SpecializationSequence(StringRef Str) {
+        const bool Ok = Str.consume_front(".");
+        assert(Ok && "A version always starts with a dot");
+        for (StringRef SpecializationStr : split(Str, '.'))
+          Specializations.emplace_back(SpecializationStr);
+      }
+
+      SmallString<64> str() const {
+        SmallString<64> Text;
+        raw_svector_ostream OS(Text);
+        for (const auto &S : Specializations)
+          OS << S.str();
+        return Text;
+      }
+    };
+
+    SpecializationSequence Specializations;
+    std::string Symbol;
 
     Version() = default;
 
-    Version(std::initializer_list<Specialization> Init)
-      : Specializations(Init)
-    {}
-
     Version(StringRef Str) {
-      const bool Ok = Str.consume_front(".");
-      assert(Ok && "A version always starts with a dot");
-      for (StringRef SpecializationStr : split(Str, '.')) {
-        Specializations.push_back([&]() -> Specialization {
-          if (SpecializationStr == "noloop") return { Specialization::NoLoop{} };
-          if (SpecializationStr == "noalias") return { Specialization::NoAlias{} };
-          if (SpecializationStr == "align16") return { Specialization::Align16{} };
-          if (SpecializationStr == "unroll2") return { Specialization::Unroll2{} };
-          llvm_unreachable("unexpected specialization");
-        }());
-      }
+      assert(Str.count('@') == 1);
+      std::tie(Specializations, Symbol) = Str.split('@');
+    }
+
+    Version(SpecializationSequence Specializations, StringRef Symbol)
+      : Specializations(Specializations), Symbol(Symbol)
+    {
+      assert(!Specializations.Specializations.empty());
+      assert(!Symbol.empty());
     }
 
     SmallString<128> str() const {
-      SmallString<128> VersionText;
-      raw_svector_ostream OS(VersionText);
-      for (const auto &S : Specializations)
-        OS << S.str();
-      return VersionText;
+      return { Specializations.str(), "@", Symbol };
     }
   };
 

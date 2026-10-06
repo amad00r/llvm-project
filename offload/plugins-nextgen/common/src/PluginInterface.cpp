@@ -218,6 +218,8 @@ Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
                                        const KernelLaunchArgsTy &LaunchArgs,
                                        uint32_t NumThreads[3],
                                        uint32_t NumBlocks[3]) const {
+  INFO(OMP_INFOTYPE_PLUGIN_KERNEL, GenericDevice.getDeviceId(), "Launching version `%s`", Name.data());
+
   assert(!Info.Args || Info.Args->size() == LaunchArgs.NumArgs);
   assert(LaunchArgs.NumArgs == 0 || LaunchArgs.Args);
   for (uint32_t I = 0; I < LaunchArgs.NumArgs; ++I) {
@@ -229,7 +231,7 @@ Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
           Ty = Info.Args.value()[I].Ty;
 
         if (std::holds_alternative<KernelInfo::Argument::Type::Ptr>(Ty.Variant)) return formatv(
-          "  arg[{}]={{ type={}, size={}, base_ptr={}, val={} }\n",
+          "arg[{}]={{ type={}, size={}, base_ptr={}, val={} }\n",
           I,
           Ty.str(),
           LaunchArgs.ArgSizes ? LaunchArgs.ArgSizes[I] : -1,
@@ -238,7 +240,7 @@ Error GenericKernelTy::printLaunchInfo(GenericDeviceTy &GenericDevice,
         );
 
         return formatv(
-          "  arg[{}]={{ type={}, size={}, val={} }\n",
+          "arg[{}]={{ type={}, size={}, val={} }\n",
           I,
           Ty.str(),
           LaunchArgs.ArgSizes ? LaunchArgs.ArgSizes[I] : -1,

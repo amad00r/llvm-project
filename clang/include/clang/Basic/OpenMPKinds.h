@@ -188,6 +188,8 @@ struct OpenMPScheduleTy final {
   OpenMPScheduleClauseKind Schedule = OMPC_SCHEDULE_unknown;
   OpenMPScheduleClauseModifier M1 = OMPC_SCHEDULE_MODIFIER_unknown;
   OpenMPScheduleClauseModifier M2 = OMPC_SCHEDULE_MODIFIER_unknown;
+  /// The user did not specify a schedule clause.
+  bool IsImplementationDefined = false;
   /// Request the fused distr_static_chunk + static_chunkone runtime schedule
   /// in `for_static_init`. The outer `distribute_static_init` is skipped.
   bool UseFusedDistChunkSchedule = false;
@@ -534,4 +536,3 @@ struct llvm::enum_iteration_traits<clang::OpenMPDefaultmapClauseKind> {
   static constexpr bool is_iterable = true;
 };
 #endif
-

@@ -40,6 +40,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/AtomicOrdering.h"
 #include "llvm/Support/VirtualFileSystem.h"
@@ -2728,7 +2729,8 @@ static void emitForStaticInitCall(
     CodeGenFunction &CGF, llvm::Value *UpdateLocation, llvm::Value *ThreadId,
     llvm::FunctionCallee ForStaticInitFunction, OpenMPSchedType Schedule,
     OpenMPScheduleClauseModifier M1, OpenMPScheduleClauseModifier M2,
-    const CGOpenMPRuntime::StaticRTInput &Values) {
+    const CGOpenMPRuntime::StaticRTInput &Values,
+    bool IsImplementationDefined) {
   if (!CGF.HaveInsertPoint())
     return;
 
@@ -2772,7 +2774,10 @@ static void emitForStaticInitCall(
       CGF.Builder.getIntN(Values.IVSize, 1),            // Incr
       Chunk                                             // Chunk
   };
-  CGF.EmitRuntimeCall(ForStaticInitFunction, Args);
+  llvm::CallInst *Call = CGF.EmitRuntimeCall(ForStaticInitFunction, Args);
+  if (IsImplementationDefined)
+    Call->setMetadata("omp.implementation_defined",
+                      llvm::MDNode::get(CGF.getLLVMContext(), {}));
 }
 
 void CGOpenMPRuntime::emitForStaticInit(CodeGenFunction &CGF,
@@ -2797,7 +2802,8 @@ void CGOpenMPRuntime::emitForStaticInit(CodeGenFunction &CGF,
                                              false);
   auto DL = ApplyDebugLocation::CreateDefaultArtificial(CGF, Loc);
   emitForStaticInitCall(CGF, UpdatedLocation, ThreadId, StaticInitFunction,
-                        ScheduleNum, ScheduleKind.M1, ScheduleKind.M2, Values);
+                        ScheduleNum, ScheduleKind.M1, ScheduleKind.M2, Values,
+                        ScheduleKind.IsImplementationDefined);
 }
 
 void CGOpenMPRuntime::emitDistributeStaticInit(
@@ -2817,7 +2823,8 @@ void CGOpenMPRuntime::emitDistributeStaticInit(
 
   emitForStaticInitCall(CGF, UpdatedLocation, ThreadId, StaticInitFunction,
                         ScheduleNum, OMPC_SCHEDULE_MODIFIER_unknown,
-                        OMPC_SCHEDULE_MODIFIER_unknown, Values);
+                        OMPC_SCHEDULE_MODIFIER_unknown, Values,
+                        /*IsImplementationDefined=*/false);
 }
 
 void CGOpenMPRuntime::emitForStaticFinish(CodeGenFunction &CGF,

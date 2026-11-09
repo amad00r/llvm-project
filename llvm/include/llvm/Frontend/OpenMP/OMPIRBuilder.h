@@ -1278,13 +1278,15 @@ private:
   /// dist_schedule as this is handled slightly differently
   /// \param DistScheduleSchedType Defines the Schedule Type for the Distribute
   /// loop. Defaults to None if no Distribute loop is present.
+  /// \param IsImplementationDefined Whether the user omitted the schedule.
   ///
   /// \returns Point where to insert code after the workshare construct.
   InsertPointOrErrorTy applyStaticWorkshareLoop(
       DebugLoc DL, CanonicalLoopInfo *CLI, InsertPointTy AllocaIP,
       omp::WorksharingLoopType LoopType, bool NeedsBarrier,
       bool HasDistSchedule = false,
-      omp::OMPScheduleType DistScheduleSchedType = omp::OMPScheduleType::None);
+      omp::OMPScheduleType DistScheduleSchedType = omp::OMPScheduleType::None,
+      bool IsImplementationDefined = false);
 
   /// Modifies the canonical loop a statically-scheduled workshare loop with a
   /// user-specified chunk size.
@@ -1304,6 +1306,7 @@ private:
   ///                 scheduling. If \p nullptr, defaults to 1.
   /// \param DistScheduleSchedType Defines the Schedule Type for the Distribute
   /// loop. Defaults to None if no Distribute loop is present.
+  /// \param IsImplementationDefined Whether the user omitted the schedule.
   ///
   /// \returns Point where to insert code after the workshare construct.
   InsertPointOrErrorTy applyStaticChunkedWorkshareLoop(
@@ -1312,7 +1315,8 @@ private:
       omp::OMPScheduleType SchedType =
           omp::OMPScheduleType::UnorderedStaticChunked,
       Value *DistScheduleChunkSize = nullptr,
-      omp::OMPScheduleType DistScheduleSchedType = omp::OMPScheduleType::None);
+      omp::OMPScheduleType DistScheduleSchedType = omp::OMPScheduleType::None,
+      bool IsImplementationDefined = false);
 
   /// Modifies the canonical loop to be a dynamically-scheduled workshare loop.
   ///

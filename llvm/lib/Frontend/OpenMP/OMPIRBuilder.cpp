@@ -6133,7 +6133,7 @@ static FunctionCallee getKmpcForStaticInitForType(Type *Ty, Module &M,
 OpenMPIRBuilder::InsertPointOrErrorTy OpenMPIRBuilder::applyStaticWorkshareLoop(
     DebugLoc DL, CanonicalLoopInfo *CLI, InsertPointTy AllocaIP,
     WorksharingLoopType LoopType, bool NeedsBarrier, bool HasDistSchedule,
-    OMPScheduleType DistScheduleSchedType) {
+    OMPScheduleType DistScheduleSchedType, bool IsImplementationDefined) {
   assert(CLI->isValid() && "Requires a valid canonical loop");
   assert(!isConflictIP(AllocaIP, CLI->getPreheaderIP()) &&
          "Require dedicated allocate IP");
@@ -6212,9 +6212,12 @@ OpenMPIRBuilder::InsertPointOrErrorTy OpenMPIRBuilder::applyStaticWorkshareLoop(
       Args.push_back(PDistUpperBound);
     }
     Args.append({PStride, One, Zero});
-    createRuntimeFunctionCall(StaticInit, Args);
+    return createRuntimeFunctionCall(StaticInit, Args);
   };
-  BuildInitCall(SchedulingType, Builder);
+  CallInst *InitCall = BuildInitCall(SchedulingType, Builder);
+  if (IsImplementationDefined)
+    InitCall->setMetadata("omp.implementation_defined",
+                          MDNode::get(M.getContext(), {}));
   if (HasDistSchedule &&
       LoopType != WorksharingLoopType::DistributeStaticLoop) {
     Constant *DistScheduleSchedType = ConstantInt::get(
@@ -6308,7 +6311,8 @@ OpenMPIRBuilder::InsertPointOrErrorTy
 OpenMPIRBuilder::applyStaticChunkedWorkshareLoop(
     DebugLoc DL, CanonicalLoopInfo *CLI, InsertPointTy AllocaIP,
     bool NeedsBarrier, Value *ChunkSize, OMPScheduleType SchedType,
-    Value *DistScheduleChunkSize, OMPScheduleType DistScheduleSchedType) {
+    Value *DistScheduleChunkSize, OMPScheduleType DistScheduleSchedType,
+    bool IsImplementationDefined) {
   assert(CLI->isValid() && "Requires a valid canonical loop");
   assert((ChunkSize || DistScheduleChunkSize) && "Chunk size is required");
 
@@ -6401,14 +6405,17 @@ OpenMPIRBuilder::applyStaticChunkedWorkshareLoop(
                         PUpperBound, PStride, One,
                         this](Value *SchedulingType, Value *ChunkSize,
                               auto &Builder) {
-    createRuntimeFunctionCall(
+    return createRuntimeFunctionCall(
         StaticInit, {/*loc=*/SrcLoc, /*global_tid=*/ThreadNum,
                      /*schedtype=*/SchedulingType, /*plastiter=*/PLastIter,
                      /*plower=*/PLowerBound, /*pupper=*/PUpperBound,
                      /*pstride=*/PStride, /*incr=*/One,
                      /*chunk=*/ChunkSize});
   };
-  BuildInitCall(SchedulingType, CastedChunkSize, Builder);
+  CallInst *InitCall = BuildInitCall(SchedulingType, CastedChunkSize, Builder);
+  if (IsImplementationDefined)
+    InitCall->setMetadata("omp.implementation_defined",
+                          MDNode::get(M.getContext(), {}));
   if (DistScheduleSchedType != OMPScheduleType::None &&
       SchedType != OMPScheduleType::OrderedDistributeChunked &&
       SchedType != OMPScheduleType::OrderedDistribute) {
@@ -6829,9 +6836,11 @@ OpenMPIRBuilder::InsertPointOrErrorTy OpenMPIRBuilder::applyWorkshareLoop(
     if (DistScheduleChunkSize)
       return applyStaticChunkedWorkshareLoop(
           DL, CLI, AllocaIP, NeedsBarrier, ChunkSize, EffectiveScheduleType,
-          DistScheduleChunkSize, DistScheduleSchedType);
+          DistScheduleChunkSize, DistScheduleSchedType,
+          SchedKind == OMP_SCHEDULE_Default);
     return applyStaticWorkshareLoop(DL, CLI, AllocaIP, LoopType, NeedsBarrier,
-                                    HasDistSchedule);
+                                    HasDistSchedule, DistScheduleSchedType,
+                                    SchedKind == OMP_SCHEDULE_Default);
 
   case OMPScheduleType::BaseStaticChunked:
   case OMPScheduleType::BaseDistributeChunked:
@@ -6841,7 +6850,8 @@ OpenMPIRBuilder::InsertPointOrErrorTy OpenMPIRBuilder::applyWorkshareLoop(
     // FIXME: Monotonicity ignored?
     return applyStaticChunkedWorkshareLoop(
         DL, CLI, AllocaIP, NeedsBarrier, ChunkSize, EffectiveScheduleType,
-        DistScheduleChunkSize, DistScheduleSchedType);
+        DistScheduleChunkSize, DistScheduleSchedType,
+        SchedKind == OMP_SCHEDULE_Default);
 
   case OMPScheduleType::BaseRuntime:
   case OMPScheduleType::BaseAuto:

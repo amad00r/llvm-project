@@ -63,6 +63,13 @@ private:
   const ThinOrFullLTOPhase LTOPhase = ThinOrFullLTOPhase::None;
 };
 
+/// Prepare OpenMP worksharing loops for the loop vectorizer.
+class OpenMPVectorizerPass
+    : public OptionalPassInfoMixin<OpenMPVectorizerPass> {
+public:
+  LLVM_ABI PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
+};
+
 } // end namespace llvm
 
 #endif // LLVM_TRANSFORMS_IPO_OPENMPOPT_H

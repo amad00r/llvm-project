@@ -14,6 +14,7 @@
 // - Parallel region merging.
 // - Transforming generic-mode device kernels to SPMD mode.
 // - Specializing the state machine for generic-mode device kernels.
+// - Preparation of worksharing loops for vectorization.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,10 +29,13 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/CallGraph.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Frontend/OpenMP/OMPConstants.h"
 #include "llvm/Frontend/OpenMP/OMPDeviceConstants.h"
@@ -44,12 +48,14 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/ProfDataUtils.h"
@@ -60,8 +66,13 @@
 #include "llvm/TargetParser/AtomicScope.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/IPO/Attributor.h"
+#include "llvm/Transforms/Scalar/DCE.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/CallGraphUpdater.h"
+#include "llvm/Transforms/Utils/Mem2Reg.h"
+#include "llvm/Transforms/Utils/LoopUtils.h"
+#include "llvm/Transforms/Utils/LoopSimplify.h"
+#include "llvm/Transforms/Vectorize/LoopVectorize.h"
 
 #include <algorithm>
 #include <memory>
@@ -123,6 +134,12 @@ static cl::opt<bool> DisableOpenMPOptStateMachineRewrite(
 static cl::opt<bool> DisableOpenMPOptBarrierElimination(
     "openmp-opt-disable-barrier-elimination",
     cl::desc("Disable OpenMP optimizations that eliminate barriers."),
+    cl::Hidden, cl::init(false));
+
+static cl::opt<bool> DisableOpenMPVectorizer(
+    "openmp-vectorizer-disable",
+    cl::desc(
+        "Disable preparation of OpenMP worksharing loops for vectorization."),
     cl::Hidden, cl::init(false));
 
 static cl::opt<bool> PrintModuleAfterOptimizations(
@@ -6182,6 +6199,212 @@ PreservedAnalyses OpenMPOptCGSCCPass::run(LazyCallGraph::SCC &C,
     return PreservedAnalyses::none();
 
   return PreservedAnalyses::all();
+}
+
+namespace {
+
+bool isConstantIntAndEqualTo(const Value &V, uint64_t N) {
+  const auto *C = dyn_cast<ConstantInt>(&V);
+  return C && C->equalsInt(N);
+}
+
+class ForStaticInitCall {
+private:
+  CallInst &CI;
+
+  Value &getSchedule() const { return *CI.getArgOperand(2); }
+  Value &getIncrement() const { return *CI.getArgOperand(7); }
+  Value &getChunk() const { return *CI.getArgOperand(8); }
+
+  ForStaticInitCall(CallInst &CI) : CI(CI) {}
+
+public:
+  static std::optional<ForStaticInitCall> get(CallInst &CI) {
+    const Function *Callee = CI.getCalledFunction();
+    if (!Callee) return {};
+
+    const StringRef Name = Callee->getName();
+    if (!is_contained({
+      "__kmpc_for_static_init_4",
+      "__kmpc_for_static_init_4u",
+      "__kmpc_for_static_init_8",
+      "__kmpc_for_static_init_8u"
+    }, Name))
+      return {};
+
+    assert(CI.use_empty());
+    return { { CI } };
+  }
+
+  bool isImplementationDefined() const {
+    MDNode *N = CI.getMetadata("omp.implementation_defined");
+    if (!N) return false;
+    assert(N->getNumOperands() == 0);
+    return true;
+  }
+
+  bool isRedistributable() const {
+    if (!isImplementationDefined()) return false;
+
+    if (!isConstantIntAndEqualTo(getSchedule(), static_cast<uint64_t>(
+      omp::OMPScheduleType::UnorderedStaticChunked))) return false;
+    if (!isConstantIntAndEqualTo(getIncrement(), 1)) return false;
+    if (!isConstantIntAndEqualTo(getChunk(), 1)) return false;
+
+    return true;
+  }
+
+  void erase() {
+    CI.eraseFromParent();
+  }
+};
+
+std::optional<ForStaticInitCall> getRedistributableWorksharing(Function &F) {
+  for (Instruction &I : instructions(F)) {
+    auto *CI = dyn_cast<CallInst>(&I);
+    if (!CI) continue;
+
+    auto Worksharing = ForStaticInitCall::get(*CI);
+    if (!Worksharing) continue;
+
+    if (!Worksharing->isRedistributable()) return {};
+    return Worksharing;
+  }
+  return {};
+}
+
+} // end namespace
+
+PreservedAnalyses OpenMPVectorizerPass::run(Function &F,
+                                            FunctionAnalysisManager &AM) {
+  if (DisableOpenMPVectorizer || !omp::containsOpenMP(*F.getParent()))
+    return PreservedAnalyses::all();
+
+  std::optional<ForStaticInitCall> WorksharingInit =
+    getRedistributableWorksharing(F);
+  if (!WorksharingInit) return PreservedAnalyses::all();
+
+  CallInst *WorksharingFini = [&]() -> CallInst * {
+    for (Instruction &I : reverse(instructions(F))) {
+      auto *CI = dyn_cast<CallInst>(&I);
+      if (!CI) continue;
+      const Function *Callee = CI->getCalledFunction();
+      if (Callee && Callee->getName() == "__kmpc_for_static_fini")
+        return CI;
+    }
+    return nullptr;
+  }();
+  if (!WorksharingFini) return PreservedAnalyses::all();
+
+  Loop *L = [&]() -> Loop * {
+    LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
+    if (LI.getTopLevelLoops().size() != 1)
+      return nullptr;
+    return LI.getTopLevelLoops().front();
+  }();
+  if (!L) return PreservedAnalyses::all();
+
+
+  // ValueToValueMapTy VMap;
+  // Function *Rollback = CloneFunction(F, VMap);
+  // assert(Rollback);
+
+  WorksharingInit->erase();
+  WorksharingFini->eraseFromParent();
+
+  const bool RequestedIC = bool(getOptionalIntLoopAttribute(L, "llvm.loop.interleave.count"));
+  if (!RequestedIC)
+    addStringMetadataToLoop(L, "llvm.loop.interleave.count", 1);
+
+  AM.invalidate(F, PreservedAnalyses::none());
+
+  FunctionPassManager FPM;
+  // Erasing the runtime call leaves dead address space casts of its alloca
+  // arguments, which prevent mem2reg from promoting those allocas.
+  // e754f0efd34b makes so that DCE is needed
+  FPM.addPass(DCEPass());
+  FPM.addPass(PromotePass());
+  FPM.addPass(LoopVectorizePass());
+  FPM.addPass(LoopSimplifyPass());
+  FPM.run(F, AM);
+
+  LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
+  assert(!LI.getTopLevelLoops().empty());
+  assert(LI.getTopLevelLoops().size() <= 2);
+  ScalarEvolution &SE = AM.getResult<ScalarEvolutionAnalysis>(F);
+  Module &M = *F.getParent();
+  Type *I32Ty = Type::getInt32Ty(F.getContext());
+  FunctionCallee GetThreadNum =
+      M.getOrInsertFunction("omp_get_thread_num", I32Ty);
+  FunctionCallee GetNumThreads =
+      M.getOrInsertFunction("omp_get_num_threads", I32Ty);
+  for (Loop *L2 : LI.getTopLevelLoops()) {
+    assert(L2->isLoopSimplifyForm());
+    auto B = L2->getBounds(SE);
+    assert(B);
+    PHINode *IV = L2->getInductionVariable(SE);
+    assert(IV);
+    BasicBlock *Preheader = L2->getLoopPreheader();
+    assert(Preheader);
+    auto *StepInst = cast<BinaryOperator>(&B->getStepInst());
+    assert(StepInst->getOpcode() == Instruction::Add);
+    auto *Step = B->getStepValue();
+    unsigned StepOperand = StepInst->getOperand(0) == Step ? 0 : 1;
+    assert(StepInst->getOperand(StepOperand) == Step);
+
+    IRBuilder<> Builder(Preheader->getTerminator());
+    Type *IVTy = IV->getType();
+    Value *ThreadNum = Builder.CreateIntCast(Builder.CreateCall(GetThreadNum),
+                                             IVTy, false, "omp.thread.num");
+    Value *NumThreads = Builder.CreateIntCast(Builder.CreateCall(GetNumThreads),
+                                              IVTy, false, "omp.num.threads");
+    Value *StartOffset = Builder.CreateMul(Step, ThreadNum, "omp.start.offset");
+    Value *Start = Builder.CreateAdd(&B->getInitialIVValue(), StartOffset,
+                                     "omp.thread.start");
+    Value *ThreadStep = Builder.CreateMul(Step, NumThreads, "omp.thread.step");
+    IV->setIncomingValueForBlock(Preheader, Start);
+    StepInst->setOperand(StepOperand, ThreadStep);
+    StepInst->dropPoisonGeneratingFlags();
+  }
+
+  return PreservedAnalyses::none();
+
+  /*
+  LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
+  assert(LI.getTopLevelLoops().size() == 1);
+  // if (LI.getTopLevelLoops().size() != 1)
+  //   return PreservedAnalyses::all();
+
+  Loop *L = LI.getTopLevelLoops().front();
+  assert(L->isLoopSimplifyForm());
+  ScalarEvolution &SE = AM.getResult<ScalarEvolutionAnalysis>(F);
+  PHINode *IV = L->getInductionVariable(SE);
+  assert(IV);
+  // if (!IV)
+  //   return PreservedAnalyses::all();
+  auto Bounds = L->getBounds(SE);
+  assert(Bounds);
+  // if (!Bounds)
+  //   return PreservedAnalyses::all();
+
+  auto *StepInst = dyn_cast<BinaryOperator>(&Bounds->getStepInst());
+  assert(StepInst && StepInst->getOpcode() == Instruction::Add);
+  // if (!StepInst || StepInst->getOpcode() != Instruction::Add)
+  //   return PreservedAnalyses::all();
+  unsigned StepOperand;
+  if (StepInst->getOperand(0) == IV)
+    StepOperand = 1;
+  else if (StepInst->getOperand(1) == IV)
+    StepOperand = 0;
+  else
+    return PreservedAnalyses::all();
+
+  Constant *UnitStep = ConstantInt::get(IV->getType(), 1);
+  // TODO: assert that the step is the stride or smthn
+  // if (StepInst->getOperand(StepOperand) == UnitStep)
+  //   return PreservedAnalyses::all();
+  StepInst->setOperand(StepOperand, UnitStep);
+  */
 }
 
 bool llvm::omp::isOpenMPKernel(Function &Fn) {

@@ -8140,7 +8140,7 @@ const SCEV *ScalarEvolution::createSCEV(Value *V) {
     assert(Add.Opcode == Instruction::Add);
 
     SmallVector<SCEVUse, 2> Ops = {getSCEV(Add.LHS), getSCEV(Add.RHS)};
-    GroupByComplexity(Ops, &LI, DT);
+    groupByComplexity(Opts, Ops, &LI, DT);
 
     SCEVFlags Flags = Add.Op ? getNoWrapFlagsFromUB(Add.Op) : SCEV::FlagNone;
     Flags = StrengthenNoWrapFlags(this, scAddExpr, Ops, Flags);
@@ -8162,8 +8162,7 @@ const SCEV *ScalarEvolution::createSCEV(Value *V) {
     return getTruncateExpr(getSCEV(U->getOperand(0)), U->getType());
 
   case Instruction::ZExt:
-    if (auto BO = MatchBinaryOp(U->getOperand(0), getDataLayout(), AC, DT,
-                                dyn_cast<Instruction>(V)))
+    if (auto BO = MatchBinaryOp(U->getOperand(0), DT))
       if (BO->Opcode == Instruction::Add)
         return getExtendAddExpr(*BO, U->getType(), /*SignExtend=*/false);
     return getZeroExtendExpr(getSCEV(U->getOperand(0)), U->getType());

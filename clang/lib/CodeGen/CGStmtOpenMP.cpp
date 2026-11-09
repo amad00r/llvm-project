@@ -4115,6 +4115,7 @@ bool CodeGenFunction::EmitOMPWorksharingLoop(
         ChunkExpr = C->getChunkSize();
       } else {
         // Default behaviour for schedule clause.
+        ScheduleKind.IsImplementationDefined = true;
         CGM.getOpenMPRuntime().getDefaultScheduleAndChunk(
             *this, S, ScheduleKind.Schedule, ChunkExpr);
       }

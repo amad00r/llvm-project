@@ -164,18 +164,17 @@ extern "C" void workshareloop_unsigned_static_chunked(float *a, float *b, float 
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
 // CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
-// CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META5]], !align [[META6]]
-// CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[TMP9:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META5]], !align [[META6]]
+// CHECK-NEXT:    store i32 [[COND]], ptr [[TMP9]], align 4
 // CHECK-NEXT:    ret void
 //
 //

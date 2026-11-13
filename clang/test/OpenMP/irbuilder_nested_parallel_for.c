@@ -174,17 +174,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META2]], !align [[META3]]
 // CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK-NEXT:    ret void
@@ -377,17 +376,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META2]], !align [[META3]]
 // CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK-NEXT:    ret void
@@ -1041,17 +1039,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META2]], !align [[META3]]
 // CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK-NEXT:    ret void
@@ -1101,17 +1098,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META2]], !align [[META3]]
 // CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK-NEXT:    ret void
@@ -1161,17 +1157,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META2]], !align [[META3]]
 // CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK-NEXT:    ret void
@@ -1221,17 +1216,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META2]], !align [[META3]]
 // CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK-NEXT:    ret void
@@ -1281,17 +1275,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META2]], !align [[META3]]
 // CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK-NEXT:    ret void
@@ -1341,17 +1334,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META2]], !align [[META3]]
 // CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK-NEXT:    ret void
@@ -1401,17 +1393,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META2]], !align [[META3]]
 // CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK-NEXT:    ret void
@@ -1461,17 +1452,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META2]], !align [[META3]]
 // CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK-NEXT:    ret void
@@ -1606,17 +1596,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK-DEBUG:       cond.true:
 // CHECK-DEBUG-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META47]]
 // CHECK-DEBUG-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META47]]
-// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META47]]
+// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META47]]
+// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META47]]
 // CHECK-DEBUG-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META47]]
-// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META47]]
-// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META47]]
-// CHECK-DEBUG-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META47]]
-// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META47]]
+// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META47]]
+// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META47]]
 // CHECK-DEBUG-NEXT:    br label [[COND_END:%.*]], !dbg [[META47]]
 // CHECK-DEBUG:       cond.false:
 // CHECK-DEBUG-NEXT:    br label [[COND_END]], !dbg [[META47]]
 // CHECK-DEBUG:       cond.end:
-// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META47]]
+// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META47]]
 // CHECK-DEBUG-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META47]], !nonnull [[META11]], !align [[META45]]
 // CHECK-DEBUG-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META47]]
 // CHECK-DEBUG-NEXT:    ret void, !dbg [[DBG49:![0-9]+]]
@@ -1827,17 +1816,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK-DEBUG:       cond.true:
 // CHECK-DEBUG-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META133]]
 // CHECK-DEBUG-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META133]]
-// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META133]]
+// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META133]]
+// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META133]]
 // CHECK-DEBUG-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META133]]
-// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META133]]
-// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META133]]
-// CHECK-DEBUG-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META133]]
-// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META133]]
+// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META133]]
+// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META133]]
 // CHECK-DEBUG-NEXT:    br label [[COND_END:%.*]], !dbg [[META133]]
 // CHECK-DEBUG:       cond.false:
 // CHECK-DEBUG-NEXT:    br label [[COND_END]], !dbg [[META133]]
 // CHECK-DEBUG:       cond.end:
-// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META133]]
+// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META133]]
 // CHECK-DEBUG-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META133]], !nonnull [[META11]], !align [[META45]]
 // CHECK-DEBUG-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META133]]
 // CHECK-DEBUG-NEXT:    ret void, !dbg [[DBG135:![0-9]+]]
@@ -2522,17 +2510,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK-DEBUG:       cond.true:
 // CHECK-DEBUG-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META308]]
 // CHECK-DEBUG-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META308]]
-// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META308]]
+// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META308]]
+// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META308]]
 // CHECK-DEBUG-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META308]]
-// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META308]]
-// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META308]]
-// CHECK-DEBUG-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META308]]
-// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META308]]
+// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META308]]
+// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META308]]
 // CHECK-DEBUG-NEXT:    br label [[COND_END:%.*]], !dbg [[META308]]
 // CHECK-DEBUG:       cond.false:
 // CHECK-DEBUG-NEXT:    br label [[COND_END]], !dbg [[META308]]
 // CHECK-DEBUG:       cond.end:
-// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META308]]
+// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META308]]
 // CHECK-DEBUG-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META308]], !nonnull [[META11]], !align [[META45]]
 // CHECK-DEBUG-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META308]]
 // CHECK-DEBUG-NEXT:    ret void, !dbg [[DBG310:![0-9]+]]
@@ -2590,17 +2577,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK-DEBUG:       cond.true:
 // CHECK-DEBUG-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META330]]
 // CHECK-DEBUG-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META330]]
-// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META330]]
+// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META330]]
+// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META330]]
 // CHECK-DEBUG-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META330]]
-// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META330]]
-// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META330]]
-// CHECK-DEBUG-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META330]]
-// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META330]]
+// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META330]]
+// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META330]]
 // CHECK-DEBUG-NEXT:    br label [[COND_END:%.*]], !dbg [[META330]]
 // CHECK-DEBUG:       cond.false:
 // CHECK-DEBUG-NEXT:    br label [[COND_END]], !dbg [[META330]]
 // CHECK-DEBUG:       cond.end:
-// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META330]]
+// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META330]]
 // CHECK-DEBUG-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META330]], !nonnull [[META11]], !align [[META45]]
 // CHECK-DEBUG-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META330]]
 // CHECK-DEBUG-NEXT:    ret void, !dbg [[DBG332:![0-9]+]]
@@ -2658,17 +2644,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK-DEBUG:       cond.true:
 // CHECK-DEBUG-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META352]]
 // CHECK-DEBUG-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META352]]
-// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META352]]
+// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META352]]
+// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META352]]
 // CHECK-DEBUG-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META352]]
-// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META352]]
-// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META352]]
-// CHECK-DEBUG-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META352]]
-// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META352]]
+// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META352]]
+// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META352]]
 // CHECK-DEBUG-NEXT:    br label [[COND_END:%.*]], !dbg [[META352]]
 // CHECK-DEBUG:       cond.false:
 // CHECK-DEBUG-NEXT:    br label [[COND_END]], !dbg [[META352]]
 // CHECK-DEBUG:       cond.end:
-// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META352]]
+// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META352]]
 // CHECK-DEBUG-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META352]], !nonnull [[META11]], !align [[META45]]
 // CHECK-DEBUG-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META352]]
 // CHECK-DEBUG-NEXT:    ret void, !dbg [[DBG354:![0-9]+]]
@@ -2726,17 +2711,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK-DEBUG:       cond.true:
 // CHECK-DEBUG-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META374]]
 // CHECK-DEBUG-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META374]]
-// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META374]]
+// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META374]]
+// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META374]]
 // CHECK-DEBUG-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META374]]
-// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META374]]
-// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META374]]
-// CHECK-DEBUG-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META374]]
-// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META374]]
+// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META374]]
+// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META374]]
 // CHECK-DEBUG-NEXT:    br label [[COND_END:%.*]], !dbg [[META374]]
 // CHECK-DEBUG:       cond.false:
 // CHECK-DEBUG-NEXT:    br label [[COND_END]], !dbg [[META374]]
 // CHECK-DEBUG:       cond.end:
-// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META374]]
+// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META374]]
 // CHECK-DEBUG-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META374]], !nonnull [[META11]], !align [[META45]]
 // CHECK-DEBUG-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META374]]
 // CHECK-DEBUG-NEXT:    ret void, !dbg [[DBG376:![0-9]+]]
@@ -2794,17 +2778,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK-DEBUG:       cond.true:
 // CHECK-DEBUG-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META396]]
 // CHECK-DEBUG-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META396]]
-// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META396]]
+// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META396]]
+// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META396]]
 // CHECK-DEBUG-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META396]]
-// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META396]]
-// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META396]]
-// CHECK-DEBUG-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META396]]
-// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META396]]
+// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META396]]
+// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META396]]
 // CHECK-DEBUG-NEXT:    br label [[COND_END:%.*]], !dbg [[META396]]
 // CHECK-DEBUG:       cond.false:
 // CHECK-DEBUG-NEXT:    br label [[COND_END]], !dbg [[META396]]
 // CHECK-DEBUG:       cond.end:
-// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META396]]
+// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META396]]
 // CHECK-DEBUG-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META396]], !nonnull [[META11]], !align [[META45]]
 // CHECK-DEBUG-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META396]]
 // CHECK-DEBUG-NEXT:    ret void, !dbg [[DBG398:![0-9]+]]
@@ -2862,17 +2845,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK-DEBUG:       cond.true:
 // CHECK-DEBUG-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META418]]
 // CHECK-DEBUG-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META418]]
-// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META418]]
+// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META418]]
+// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META418]]
 // CHECK-DEBUG-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META418]]
-// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META418]]
-// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META418]]
-// CHECK-DEBUG-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META418]]
-// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META418]]
+// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META418]]
+// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META418]]
 // CHECK-DEBUG-NEXT:    br label [[COND_END:%.*]], !dbg [[META418]]
 // CHECK-DEBUG:       cond.false:
 // CHECK-DEBUG-NEXT:    br label [[COND_END]], !dbg [[META418]]
 // CHECK-DEBUG:       cond.end:
-// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META418]]
+// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META418]]
 // CHECK-DEBUG-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META418]], !nonnull [[META11]], !align [[META45]]
 // CHECK-DEBUG-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META418]]
 // CHECK-DEBUG-NEXT:    ret void, !dbg [[DBG420:![0-9]+]]
@@ -2930,17 +2912,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK-DEBUG:       cond.true:
 // CHECK-DEBUG-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META440]]
 // CHECK-DEBUG-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META440]]
-// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META440]]
+// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META440]]
+// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META440]]
 // CHECK-DEBUG-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META440]]
-// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META440]]
-// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META440]]
-// CHECK-DEBUG-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META440]]
-// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META440]]
+// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META440]]
+// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META440]]
 // CHECK-DEBUG-NEXT:    br label [[COND_END:%.*]], !dbg [[META440]]
 // CHECK-DEBUG:       cond.false:
 // CHECK-DEBUG-NEXT:    br label [[COND_END]], !dbg [[META440]]
 // CHECK-DEBUG:       cond.end:
-// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META440]]
+// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META440]]
 // CHECK-DEBUG-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META440]], !nonnull [[META11]], !align [[META45]]
 // CHECK-DEBUG-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META440]]
 // CHECK-DEBUG-NEXT:    ret void, !dbg [[DBG442:![0-9]+]]
@@ -2998,17 +2979,16 @@ void parallel_for_2(float *r, int a, double b) {
 // CHECK-DEBUG:       cond.true:
 // CHECK-DEBUG-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META462]]
 // CHECK-DEBUG-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META462]]
-// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META462]]
+// CHECK-DEBUG-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META462]]
+// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META462]]
 // CHECK-DEBUG-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META462]]
-// CHECK-DEBUG-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META462]]
-// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META462]]
-// CHECK-DEBUG-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META462]]
-// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META462]]
+// CHECK-DEBUG-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META462]]
+// CHECK-DEBUG-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META462]]
 // CHECK-DEBUG-NEXT:    br label [[COND_END:%.*]], !dbg [[META462]]
 // CHECK-DEBUG:       cond.false:
 // CHECK-DEBUG-NEXT:    br label [[COND_END]], !dbg [[META462]]
 // CHECK-DEBUG:       cond.end:
-// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META462]]
+// CHECK-DEBUG-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META462]]
 // CHECK-DEBUG-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META462]], !nonnull [[META11]], !align [[META45]]
 // CHECK-DEBUG-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META462]]
 // CHECK-DEBUG-NEXT:    ret void, !dbg [[DBG464:![0-9]+]]

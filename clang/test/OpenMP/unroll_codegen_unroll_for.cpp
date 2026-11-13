@@ -55,27 +55,30 @@ extern "C" void body(...) {}
 // IR-NEXT:    %[[SUB:.+]] = sub i32 %[[TMP5]], %[[TMP6]]
 // IR-NEXT:    %[[SUB4:.+]] = sub i32 %[[SUB]], 1
 // IR-NEXT:    %[[TMP7:.+]] = load i32, ptr %[[DOTCAPTURE_EXPR_2]], align 4
-// IR-NEXT:    %[[ADD:.+]] = add i32 %[[SUB4]], %[[TMP7]]
-// IR-NEXT:    %[[TMP8:.+]] = load i32, ptr %[[DOTCAPTURE_EXPR_2]], align 4
-// IR-NEXT:    %[[DIV:.+]] = udiv i32 %[[ADD]], %[[TMP8]]
-// IR-NEXT:    %[[SUB5:.+]] = sub i32 %[[DIV]], 1
+// IR-NEXT:    %[[DIV:.+]] = udiv i32 %[[SUB4]], %[[TMP7]]
+// IR-NEXT:    %[[ADD:.+]] = add i32 %[[DIV]], 1
+// IR-NEXT:    %[[SUB5:.+]] = sub i32 %[[ADD]], 1
 // IR-NEXT:    store i32 %[[SUB5]], ptr %[[DOTCAPTURE_EXPR_3]], align 4
 // IR-NEXT:    store i32 0, ptr %[[DOTUNROLLED_IV_I]], align 4
 // IR-NEXT:    %[[TMP9:.+]] = load i32, ptr %[[DOTCAPTURE_EXPR_3]], align 4
 // IR-NEXT:    %[[ADD7:.+]] = add i32 %[[TMP9]], 1
 // IR-NEXT:    store i32 %[[ADD7]], ptr %[[DOTCAPTURE_EXPR_6]], align 4
 // IR-NEXT:    %[[TMP10:.+]] = load i32, ptr %[[DOTCAPTURE_EXPR_6]], align 4
-// IR-NEXT:    %[[SUB9:.+]] = sub i32 %[[TMP10]], -1
-// IR-NEXT:    %[[DIV10:.+]] = udiv i32 %[[SUB9]], 2
-// IR-NEXT:    %[[SUB11:.+]] = sub i32 %[[DIV10]], 1
+// IR-NEXT:    %[[SUB9:.+]] = sub i32 %[[TMP10]], 0
+// IR-NEXT:    %[[SUB9_SPAN:.+]] = sub i32 %[[SUB9]], 1
+// IR-NEXT:    %[[DIV10:.+]] = udiv i32 %[[SUB9_SPAN]], 2
+// IR-NEXT:    %[[DIV10_COUNT:.+]] = add i32 %[[DIV10]], 1
+// IR-NEXT:    %[[SUB11:.+]] = sub i32 %[[DIV10_COUNT]], 1
 // IR-NEXT:    store i32 %[[SUB11]], ptr %[[DOTCAPTURE_EXPR_8]], align 4
 // IR-NEXT:    %[[TMP11:.+]] = load i32, ptr %[[DOTCAPTURE_EXPR_8]], align 4
 // IR-NEXT:    %[[ADD13:.+]] = add i32 %[[TMP11]], 1
 // IR-NEXT:    store i32 %[[ADD13]], ptr %[[DOTCAPTURE_EXPR_12]], align 4
 // IR-NEXT:    %[[TMP12:.+]] = load i32, ptr %[[DOTCAPTURE_EXPR_12]], align 4
-// IR-NEXT:    %[[SUB15:.+]] = sub i32 %[[TMP12]], -1
-// IR-NEXT:    %[[DIV16:.+]] = udiv i32 %[[SUB15]], 2
-// IR-NEXT:    %[[SUB17:.+]] = sub i32 %[[DIV16]], 1
+// IR-NEXT:    %[[SUB15:.+]] = sub i32 %[[TMP12]], 0
+// IR-NEXT:    %[[SUB15_SPAN:.+]] = sub i32 %[[SUB15]], 1
+// IR-NEXT:    %[[DIV16:.+]] = udiv i32 %[[SUB15_SPAN]], 2
+// IR-NEXT:    %[[DIV16_COUNT:.+]] = add i32 %[[DIV16]], 1
+// IR-NEXT:    %[[SUB17:.+]] = sub i32 %[[DIV16_COUNT]], 1
 // IR-NEXT:    store i32 %[[SUB17]], ptr %[[DOTCAPTURE_EXPR_14]], align 4
 // IR-NEXT:    store i32 0, ptr %[[DOTUNROLLED_IV__UNROLLED_IV_I]], align 4
 // IR-NEXT:    %[[TMP13:.+]] = load i32, ptr %[[DOTCAPTURE_EXPR_12]], align 4

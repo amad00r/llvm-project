@@ -193,19 +193,18 @@ void unroll_partial_heuristic_runtime_for(int n, float *a, float *b, float *c, f
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP10:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP9]], [[TMP10]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP9]], [[TMP10]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP11:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP11]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP12:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP12]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP11]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
-// CHECK-NEXT:    [[TMP13:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META5]], !align [[META6]]
-// CHECK-NEXT:    store i32 [[COND]], ptr [[TMP13]], align 4
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[TMP12:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META5]], !align [[META6]]
+// CHECK-NEXT:    store i32 [[COND]], ptr [[TMP12]], align 4
 // CHECK-NEXT:    ret void
 //
 //

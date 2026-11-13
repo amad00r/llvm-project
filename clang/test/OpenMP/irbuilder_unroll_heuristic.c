@@ -78,7 +78,7 @@ void unroll_heuristic(float *a, float *b, float *c, float *d) {
 // CHECK-NEXT:    br label [[OMP_LOOP_INC]]
 // CHECK:       omp_loop.inc:
 // CHECK-NEXT:    [[OMP_LOOP_NEXT]] = add nuw i32 [[OMP_LOOP_IV]], 1
-// CHECK-NEXT:    br label [[OMP_LOOP_HEADER]], !llvm.loop [[LOOP3:![0-9]+]]
+// CHECK-NEXT:    br label [[OMP_LOOP_HEADER]], !llvm.loop [[LOOP2:![0-9]+]]
 // CHECK:       omp_loop.exit:
 // CHECK-NEXT:    br label [[OMP_LOOP_AFTER:%.*]]
 // CHECK:       omp_loop.after:
@@ -97,7 +97,7 @@ void unroll_heuristic(float *a, float *b, float *c, float *d) {
 // CHECK-NEXT:    store ptr [[__CONTEXT]], ptr [[__CONTEXT_ADDR]], align 8
 // CHECK-NEXT:    [[TMP0:%.*]] = load ptr, ptr [[__CONTEXT_ADDR]], align 8
 // CHECK-NEXT:    [[TMP1:%.*]] = getelementptr inbounds nuw [[STRUCT_ANON:%.*]], ptr [[TMP0]], i32 0, i32 0
-// CHECK-NEXT:    [[TMP2:%.*]] = load ptr, ptr [[TMP1]], align 8
+// CHECK-NEXT:    [[TMP2:%.*]] = load ptr, ptr [[TMP1]], align 8, !nonnull [[META4:![0-9]+]], !align [[META5:![0-9]+]]
 // CHECK-NEXT:    [[TMP3:%.*]] = load i32, ptr [[TMP2]], align 4
 // CHECK-NEXT:    store i32 [[TMP3]], ptr [[DOTSTART]], align 4
 // CHECK-NEXT:    store i32 128, ptr [[DOTSTOP]], align 4
@@ -109,19 +109,18 @@ void unroll_heuristic(float *a, float *b, float *c, float *d) {
 // CHECK:       cond.true:
 // CHECK-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK-NEXT:    br label [[COND_END:%.*]]
 // CHECK:       cond.false:
 // CHECK-NEXT:    br label [[COND_END]]
 // CHECK:       cond.end:
-// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
-// CHECK-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8
-// CHECK-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
+// CHECK-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK-NEXT:    [[TMP9:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META4]], !align [[META5]]
+// CHECK-NEXT:    store i32 [[COND]], ptr [[TMP9]], align 4
 // CHECK-NEXT:    ret void
 //
 //
@@ -140,7 +139,7 @@ void unroll_heuristic(float *a, float *b, float *c, float *d) {
 // CHECK-NEXT:    [[TMP3:%.*]] = load i32, ptr [[LOGICAL_ADDR]], align 4
 // CHECK-NEXT:    [[MUL:%.*]] = mul i32 1, [[TMP3]]
 // CHECK-NEXT:    [[ADD:%.*]] = add i32 [[TMP2]], [[MUL]]
-// CHECK-NEXT:    [[TMP4:%.*]] = load ptr, ptr [[LOOPVAR_ADDR]], align 8
+// CHECK-NEXT:    [[TMP4:%.*]] = load ptr, ptr [[LOOPVAR_ADDR]], align 8, !nonnull [[META4]], !align [[META5]]
 // CHECK-NEXT:    store i32 [[ADD]], ptr [[TMP4]], align 4
 // CHECK-NEXT:    ret void
 //

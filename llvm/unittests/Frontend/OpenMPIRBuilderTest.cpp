@@ -1489,6 +1489,8 @@ TEST_F(OpenMPIRBuilderTest, CanonicalLoopTripCount) {
   EXPECT_EQ(EvalTripCount(0xFFFE, 0xFFFF, 1, false, false), 1);
   EXPECT_EQ(EvalTripCount(0, 0xFFFF, 0x100, false, false), 0x100);
   EXPECT_EQ(EvalTripCount(0, 0xFFFF, 0xFFFF, false, false), 1);
+  EXPECT_EQ(EvalTripCount(0, 0xFFFF, 0x1111, false, false), 15);
+  EXPECT_EQ(EvalTripCount(0, 0xFFFE, 0x1111, false, true), 15);
 
   EXPECT_EQ(EvalTripCount(0, 6, 5, false, false), 2);
   EXPECT_EQ(EvalTripCount(0, 0xFFFF, 0xFFFE, false, false), 2);
@@ -1516,6 +1518,24 @@ TEST_F(OpenMPIRBuilderTest, CanonicalLoopTripCount) {
   EXPECT_EQ(EvalTripCount(0x7FFF, INT16_MIN, -1, true, false), 0xFFFF);
   EXPECT_EQ(EvalTripCount(0x7FFF, 1, INT16_MIN, true, false), 1);
   EXPECT_EQ(EvalTripCount(0x7FFF, -1, INT16_MIN, true, true), 2);
+  EXPECT_EQ(EvalTripCount(INT16_MIN, INT16_MAX, 0x1111, true, false), 15);
+  EXPECT_EQ(EvalTripCount(INT16_MAX, INT16_MIN, -0x1111, true, false), 15);
+
+  // Constant folding does not expose an incorrect nsw flag. With a runtime
+  // start, the span to INT32_MAX may use the entire unsigned 32-bit range.
+  for (bool InclusiveStop : {false, true}) {
+    OMPBuilder.calculateCanonicalLoopTripCount(
+        {Builder.saveIP(), DL}, F->getArg(0), Builder.getInt32(INT32_MAX),
+        Builder.getInt32(0x11111111), /*IsSigned=*/true, InclusiveStop);
+  }
+  bool FoundSub = false;
+  for (Instruction &I : *BB) {
+    if (I.getOpcode() == Instruction::Sub) {
+      FoundSub = true;
+      EXPECT_FALSE(cast<BinaryOperator>(I).hasNoSignedWrap());
+    }
+  }
+  EXPECT_TRUE(FoundSub);
 
   // Finalize the function and verify it.
   Builder.CreateRetVoid();

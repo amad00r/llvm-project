@@ -6166,6 +6166,24 @@ static CapturedStmt *buildDistanceFunc(Sema &Actions, QualType LogicalTy,
     auto BuildVarRef = [&](VarDecl *VD) {
       return buildDeclRefExpr(Actions, VD, VD->getType(), {});
     };
+    auto BuildRange = [&](VarDecl *Upper, VarDecl *Lower) {
+      Expr *UpperRef = BuildVarRef(Upper);
+      Expr *LowerRef = BuildVarRef(Lower);
+      // A signed counter's range can exceed its signed maximum. Convert the
+      // operands before subtracting; casting an overflowing difference is too
+      // late. Pointers and iterators still need their usual subtraction.
+      if (Upper->getType()->isIntegerType() &&
+          Lower->getType()->isIntegerType()) {
+        UpperRef = AssertSuccess(
+            Actions.BuildCStyleCastExpr({}, LogicalTSI, {}, UpperRef));
+        LowerRef = AssertSuccess(
+            Actions.BuildCStyleCastExpr({}, LogicalTSI, {}, LowerRef));
+      }
+      Expr *Range = AssertSuccess(
+          Actions.BuildBinOp(nullptr, {}, BO_Sub, UpperRef, LowerRef));
+      return AssertSuccess(
+          Actions.BuildCStyleCastExpr({}, LogicalTSI, {}, Range));
+    };
 
     IntegerLiteral *Zero = IntegerLiteral::Create(
         Ctx, llvm::APInt(Ctx.getIntWidth(LogicalTy), 0), LogicalTy, {});
@@ -6179,18 +6197,12 @@ static CapturedStmt *buildDistanceFunc(Sema &Actions, QualType LogicalTy,
           Actions.BuildBinOp(nullptr, {}, BO_LT, BuildVarRef(NewStep), Zero));
 
       // Positive increment.
-      Expr *ForwardRange = AssertSuccess(Actions.BuildBinOp(
-          nullptr, {}, BO_Sub, BuildVarRef(NewStop), BuildVarRef(NewStart)));
-      ForwardRange = AssertSuccess(
-          Actions.BuildCStyleCastExpr({}, LogicalTSI, {}, ForwardRange));
+      Expr *ForwardRange = BuildRange(NewStop, NewStart);
       Expr *ForwardDist = AssertSuccess(Actions.BuildBinOp(
           nullptr, {}, BO_Div, ForwardRange, BuildVarRef(NewStep)));
 
       // Negative increment.
-      Expr *BackwardRange = AssertSuccess(Actions.BuildBinOp(
-          nullptr, {}, BO_Sub, BuildVarRef(NewStart), BuildVarRef(NewStop)));
-      BackwardRange = AssertSuccess(
-          Actions.BuildCStyleCastExpr({}, LogicalTSI, {}, BackwardRange));
+      Expr *BackwardRange = BuildRange(NewStart, NewStop);
       Expr *NegIncAmount = AssertSuccess(
           Actions.BuildUnaryOp(nullptr, {}, UO_Minus, BuildVarRef(NewStep)));
       Expr *BackwardDist = AssertSuccess(
@@ -6213,38 +6225,27 @@ static CapturedStmt *buildDistanceFunc(Sema &Actions, QualType LogicalTy,
       // Compute the range between first and last counter value.
       Expr *Range;
       if (Rel == BO_GE || Rel == BO_GT)
-        Range = AssertSuccess(Actions.BuildBinOp(
-            nullptr, {}, BO_Sub, BuildVarRef(NewStart), BuildVarRef(NewStop)));
+        Range = BuildRange(NewStart, NewStop);
       else
-        Range = AssertSuccess(Actions.BuildBinOp(
-            nullptr, {}, BO_Sub, BuildVarRef(NewStop), BuildVarRef(NewStart)));
+        Range = BuildRange(NewStop, NewStart);
 
-      // Ensure unsigned range space.
-      Range =
-          AssertSuccess(Actions.BuildCStyleCastExpr({}, LogicalTSI, {}, Range));
-
-      if (Rel == BO_LE || Rel == BO_GE) {
-        // Add one to the range if the relational operator is inclusive.
+      if (Rel == BO_LT || Rel == BO_GT) {
+        // Exclude the endpoint before dividing, then include the first
+        // iteration after dividing. Rounding up the numerator can overflow.
         Range =
-            AssertSuccess(Actions.BuildBinOp(nullptr, {}, BO_Add, Range, One));
+            AssertSuccess(Actions.BuildBinOp(nullptr, {}, BO_Sub, Range, One));
       }
 
-      // Divide by the absolute step amount. If the range is not a multiple of
-      // the step size, rounding-up the effective upper bound ensures that the
-      // last iteration is included.
-      // Note that the rounding-up may cause an overflow in a temporary that
-      // could be avoided, but would have occurred in a C-style for-loop as
-      // well.
-      Expr *Divisor = BuildVarRef(NewStep);
+      // Divide by the absolute step amount, including a signed minimum step.
+      Expr *Divisor = AssertSuccess(
+          Actions.BuildCStyleCastExpr({}, LogicalTSI, {}, BuildVarRef(NewStep)));
       if (Rel == BO_GE || Rel == BO_GT)
-        Divisor =
-            AssertSuccess(Actions.BuildUnaryOp(nullptr, {}, UO_Minus, Divisor));
-      Expr *DivisorMinusOne =
-          AssertSuccess(Actions.BuildBinOp(nullptr, {}, BO_Sub, Divisor, One));
-      Expr *RangeRoundUp = AssertSuccess(
-          Actions.BuildBinOp(nullptr, {}, BO_Add, Range, DivisorMinusOne));
+        Divisor = AssertSuccess(Actions.BuildCStyleCastExpr(
+            {}, LogicalTSI, {},
+            AssertSuccess(Actions.BuildUnaryOp(nullptr, {}, UO_Minus, Divisor))));
       Dist = AssertSuccess(
-          Actions.BuildBinOp(nullptr, {}, BO_Div, RangeRoundUp, Divisor));
+          Actions.BuildBinOp(nullptr, {}, BO_Div, Range, Divisor));
+      Dist = AssertSuccess(Actions.BuildBinOp(nullptr, {}, BO_Add, Dist, One));
 
       // If there is not at least one iteration, the range contains garbage. Fix
       // to zero in this case.
@@ -9652,6 +9653,15 @@ calculateNumIters(Sema &SemaRef, Scope *S, SourceLocation DefaultLoc,
   if (!Lower || !Upper || NewStep.isInvalid())
     return nullptr;
 
+  // Retain the existing expression when its numerator is known to fit. A
+  // unit step also needs no rounding (apart from an unrepresentable full-range
+  // count). Otherwise, add the first iteration after dividing, so rounding
+  // cannot overflow the numerator: (Upper - Lower [- 1]) / Step + 1.
+  bool UseSafeRounding =
+      RoundToStep && !(IsStepConst && SRes == 1) &&
+      (!IsStepConst || !NoNeedToConvert ||
+       (LRes.isNegative() && !IsUpperConst));
+
   ExprResult Diff;
 
   // For nested triangular loops (depth >= 2), use already computed Upper and
@@ -9673,9 +9683,9 @@ calculateNumIters(Sema &SemaRef, Scope *S, SourceLocation DefaultLoc,
     return Diff.get();
   }
 
-  // If need to reorganize, then calculate the form as Upper - (Lower - Step [+
-  // 1]).
-  if (NeedToReorganize) {
+  // If needed, reorganize as Upper - (Lower - Step [+ 1]). For safe rounding,
+  // subtract directly: Lower + 1 could itself overflow in an empty strict loop.
+  if (NeedToReorganize && !UseSafeRounding) {
     Diff = Lower;
 
     // (Lower - Step [+ 1]) may be negative. Compute it in at least Upper's
@@ -9744,7 +9754,7 @@ calculateNumIters(Sema &SemaRef, Scope *S, SourceLocation DefaultLoc,
     if (!Diff.isUsable())
       return nullptr;
 
-    if (RoundToStep) {
+    if (RoundToStep && !UseSafeRounding) {
       // Upper - Lower [- 1] + Step
       Diff =
           SemaRef.BuildBinOp(S, DefaultLoc, BO_Add, Diff.get(), NewStep.get());
@@ -9758,10 +9768,19 @@ calculateNumIters(Sema &SemaRef, Scope *S, SourceLocation DefaultLoc,
   if (!Diff.isUsable())
     return nullptr;
 
-  // (Upper - Lower [- 1] + Step) / Step or (Upper - Lower) / Step
+  // Compute the last iteration before adding one to get the iteration count.
+  // Adding Step to the numerator can overflow even when the count fits.
   Diff = SemaRef.BuildBinOp(S, DefaultLoc, BO_Div, Diff.get(), NewStep.get());
   if (!Diff.isUsable())
     return nullptr;
+
+  if (UseSafeRounding) {
+    Diff = SemaRef.BuildBinOp(
+        S, DefaultLoc, BO_Add, Diff.get(),
+        SemaRef.ActOnIntegerConstant(DefaultLoc, 1).get());
+    if (!Diff.isUsable())
+      return nullptr;
+  }
 
   return Diff.get();
 }

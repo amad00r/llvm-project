@@ -6030,7 +6030,8 @@ Value *OpenMPIRBuilder::calculateCanonicalLoopTripCount(
     Incr = Builder.CreateSelect(IsNeg, Builder.CreateNeg(Step), Step);
     Value *LB = Builder.CreateSelect(IsNeg, Stop, Start);
     Value *UB = Builder.CreateSelect(IsNeg, Start, Stop);
-    Span = Builder.CreateSub(UB, LB, "", false, true);
+    // The unsigned span can exceed the signed range of the loop counter.
+    Span = Builder.CreateSub(UB, LB);
     ZeroCmp = Builder.CreateICmp(
         InclusiveStop ? CmpInst::ICMP_SLT : CmpInst::ICMP_SLE, UB, LB);
   } else {

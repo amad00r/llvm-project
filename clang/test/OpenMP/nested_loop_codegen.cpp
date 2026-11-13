@@ -647,17 +647,16 @@ int inline_decl() {
 // CHECK3:       cond.true:
 // CHECK3-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK3-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK3-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK3-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK3-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK3-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK3-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK3-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK3-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK3-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK3-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK3-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK3-NEXT:    br label [[COND_END:%.*]]
 // CHECK3:       cond.false:
 // CHECK3-NEXT:    br label [[COND_END]]
 // CHECK3:       cond.end:
-// CHECK3-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK3-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK3-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META5]], !align [[META2]]
 // CHECK3-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK3-NEXT:    ret void
@@ -815,17 +814,16 @@ int inline_decl() {
 // CHECK3:       cond.true:
 // CHECK3-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4
 // CHECK3-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4
-// CHECK3-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]]
+// CHECK3-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]]
+// CHECK3-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1
 // CHECK3-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK3-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1
-// CHECK3-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]]
-// CHECK3-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4
-// CHECK3-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]]
+// CHECK3-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]]
+// CHECK3-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1
 // CHECK3-NEXT:    br label [[COND_END:%.*]]
 // CHECK3:       cond.false:
 // CHECK3-NEXT:    br label [[COND_END]]
 // CHECK3:       cond.end:
-// CHECK3-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
+// CHECK3-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ]
 // CHECK3-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !nonnull [[META5]], !align [[META2]]
 // CHECK3-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4
 // CHECK3-NEXT:    ret void
@@ -991,17 +989,16 @@ int inline_decl() {
 // CHECK4:       cond.true:
 // CHECK4-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META58]]
 // CHECK4-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META58]]
-// CHECK4-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META58]]
+// CHECK4-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META58]]
+// CHECK4-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META58]]
 // CHECK4-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META58]]
-// CHECK4-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META58]]
-// CHECK4-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META58]]
-// CHECK4-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META58]]
-// CHECK4-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META58]]
+// CHECK4-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META58]]
+// CHECK4-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META58]]
 // CHECK4-NEXT:    br label [[COND_END:%.*]], !dbg [[META58]]
 // CHECK4:       cond.false:
 // CHECK4-NEXT:    br label [[COND_END]], !dbg [[META58]]
 // CHECK4:       cond.end:
-// CHECK4-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META58]]
+// CHECK4-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META58]]
 // CHECK4-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META58]], !nonnull [[META12]], !align [[META21]]
 // CHECK4-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META58]]
 // CHECK4-NEXT:    ret void, !dbg [[DBG60:![0-9]+]]
@@ -1172,17 +1169,16 @@ int inline_decl() {
 // CHECK4:       cond.true:
 // CHECK4-NEXT:    [[TMP6:%.*]] = load i32, ptr [[DOTSTOP]], align 4, !dbg [[META116]]
 // CHECK4-NEXT:    [[TMP7:%.*]] = load i32, ptr [[DOTSTART]], align 4, !dbg [[META116]]
-// CHECK4-NEXT:    [[SUB:%.*]] = sub nsw i32 [[TMP6]], [[TMP7]], !dbg [[META116]]
+// CHECK4-NEXT:    [[SUB:%.*]] = sub i32 [[TMP6]], [[TMP7]], !dbg [[META116]]
+// CHECK4-NEXT:    [[SUB1:%.*]] = sub i32 [[SUB]], 1, !dbg [[META116]]
 // CHECK4-NEXT:    [[TMP8:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META116]]
-// CHECK4-NEXT:    [[SUB1:%.*]] = sub i32 [[TMP8]], 1, !dbg [[META116]]
-// CHECK4-NEXT:    [[ADD:%.*]] = add i32 [[SUB]], [[SUB1]], !dbg [[META116]]
-// CHECK4-NEXT:    [[TMP9:%.*]] = load i32, ptr [[DOTSTEP]], align 4, !dbg [[META116]]
-// CHECK4-NEXT:    [[DIV:%.*]] = udiv i32 [[ADD]], [[TMP9]], !dbg [[META116]]
+// CHECK4-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB1]], [[TMP8]], !dbg [[META116]]
+// CHECK4-NEXT:    [[ADD:%.*]] = add i32 [[DIV]], 1, !dbg [[META116]]
 // CHECK4-NEXT:    br label [[COND_END:%.*]], !dbg [[META116]]
 // CHECK4:       cond.false:
 // CHECK4-NEXT:    br label [[COND_END]], !dbg [[META116]]
 // CHECK4:       cond.end:
-// CHECK4-NEXT:    [[COND:%.*]] = phi i32 [ [[DIV]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META116]]
+// CHECK4-NEXT:    [[COND:%.*]] = phi i32 [ [[ADD]], [[COND_TRUE]] ], [ 0, [[COND_FALSE]] ], !dbg [[META116]]
 // CHECK4-NEXT:    [[TMP10:%.*]] = load ptr, ptr [[DISTANCE_ADDR]], align 8, !dbg [[META116]], !nonnull [[META12]], !align [[META21]]
 // CHECK4-NEXT:    store i32 [[COND]], ptr [[TMP10]], align 4, !dbg [[META116]]
 // CHECK4-NEXT:    ret void, !dbg [[DBG118:![0-9]+]]

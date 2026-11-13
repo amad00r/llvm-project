@@ -215,9 +215,11 @@ int kernel_within_loop(int *a, int *b, int N, int num_iters) {
 // CHECK-NEXT:    [[TMP87:%.*]] = load i32, ptr [[N_ADDR]], align 4
 // CHECK-NEXT:    store i32 [[TMP87]], ptr [[DOTCAPTURE_EXPR_]], align 4
 // CHECK-NEXT:    [[TMP88:%.*]] = load i32, ptr [[DOTCAPTURE_EXPR_]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP88]], -2
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB]], 3
-// CHECK-NEXT:    [[SUB13:%.*]] = sub i32 [[DIV]], 1
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP88]], 0
+// CHECK-NEXT:    [[SUB_SPAN:%.*]] = sub i32 [[SUB]], 1
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB_SPAN]], 3
+// CHECK-NEXT:    [[DIV_COUNT:%.*]] = add i32 [[DIV]], 1
+// CHECK-NEXT:    [[SUB13:%.*]] = sub i32 [[DIV_COUNT]], 1
 // CHECK-NEXT:    store i32 [[SUB13]], ptr [[DOTCAPTURE_EXPR_12]], align 4
 // CHECK-NEXT:    [[TMP89:%.*]] = load i32, ptr [[DOTCAPTURE_EXPR_12]], align 4
 // CHECK-NEXT:    [[ADD:%.*]] = add i32 [[TMP89]], 1
@@ -251,10 +253,10 @@ int kernel_within_loop(int *a, int *b, int N, int num_iters) {
 // CHECK-NEXT:    [[TMP104:%.*]] = call i32 @__tgt_target_kernel(ptr @[[GLOB1]], i64 -1, i32 0, i32 0, ptr @.{{__omp_offloading_[0-9a-z]+_[0-9a-z]+}}__Z18kernel_within_loopPiS_ii_l13.region_id, ptr [[KERNEL_ARGS14]])
 // CHECK-NEXT:    [[TMP105:%.*]] = icmp ne i32 [[TMP104]], 0
 // CHECK-NEXT:    br i1 [[TMP105]], label [[OMP_OFFLOAD_FAILED15:%.*]], label [[OMP_OFFLOAD_CONT16:%.*]]
-// CHECK:       omp_offload.failed15:
+// CHECK:       omp_offload.failed17:
 // CHECK-NEXT:    call void @{{__omp_offloading_[0-9a-z]+_[0-9a-z]+}}__Z18kernel_within_loopPiS_ii_l13(i64 [[TMP53]], ptr [[TMP54]], ptr [[TMP55]], ptr null) #[[ATTR3]]
 // CHECK-NEXT:    br label [[OMP_OFFLOAD_CONT16]]
-// CHECK:       omp_offload.cont16:
+// CHECK:       omp_offload.cont18:
 // CHECK-NEXT:    br label [[FOR_INC:%.*]]
 // CHECK:       for.inc:
 // CHECK-NEXT:    [[TMP106:%.*]] = load i32, ptr [[I]], align 4
@@ -438,9 +440,11 @@ int kernel_within_loop(int *a, int *b, int N, int num_iters) {
 // CHECK-NEXT:    [[TMP0:%.*]] = load i32, ptr [[N_ADDR]], align 4
 // CHECK-NEXT:    store i32 [[TMP0]], ptr [[DOTCAPTURE_EXPR_]], align 4
 // CHECK-NEXT:    [[TMP1:%.*]] = load i32, ptr [[DOTCAPTURE_EXPR_]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP1]], -2
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB]], 3
-// CHECK-NEXT:    [[SUB2:%.*]] = sub i32 [[DIV]], 1
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP1]], 0
+// CHECK-NEXT:    [[SUB_SPAN:%.*]] = sub i32 [[SUB]], 1
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB_SPAN]], 3
+// CHECK-NEXT:    [[DIV_COUNT:%.*]] = add i32 [[DIV]], 1
+// CHECK-NEXT:    [[SUB2:%.*]] = sub i32 [[DIV_COUNT]], 1
 // CHECK-NEXT:    store i32 [[SUB2]], ptr [[DOTCAPTURE_EXPR_1]], align 4
 // CHECK-NEXT:    store i32 0, ptr [[J]], align 4
 // CHECK-NEXT:    [[TMP2:%.*]] = load i32, ptr [[DOTCAPTURE_EXPR_]], align 4
@@ -536,9 +540,11 @@ int kernel_within_loop(int *a, int *b, int N, int num_iters) {
 // CHECK-NEXT:    [[TMP0:%.*]] = load i32, ptr [[N_ADDR]], align 4
 // CHECK-NEXT:    store i32 [[TMP0]], ptr [[DOTCAPTURE_EXPR_]], align 4
 // CHECK-NEXT:    [[TMP1:%.*]] = load i32, ptr [[DOTCAPTURE_EXPR_]], align 4
-// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP1]], -2
-// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB]], 3
-// CHECK-NEXT:    [[SUB2:%.*]] = sub i32 [[DIV]], 1
+// CHECK-NEXT:    [[SUB:%.*]] = sub i32 [[TMP1]], 0
+// CHECK-NEXT:    [[SUB_SPAN:%.*]] = sub i32 [[SUB]], 1
+// CHECK-NEXT:    [[DIV:%.*]] = udiv i32 [[SUB_SPAN]], 3
+// CHECK-NEXT:    [[DIV_COUNT:%.*]] = add i32 [[DIV]], 1
+// CHECK-NEXT:    [[SUB2:%.*]] = sub i32 [[DIV_COUNT]], 1
 // CHECK-NEXT:    store i32 [[SUB2]], ptr [[DOTCAPTURE_EXPR_1]], align 4
 // CHECK-NEXT:    store i32 0, ptr [[J]], align 4
 // CHECK-NEXT:    [[TMP2:%.*]] = load i32, ptr [[DOTCAPTURE_EXPR_]], align 4
